@@ -33,7 +33,7 @@ git submodule update --init
 .\APPLICATION\installer\Build-Release.ps1 -Edition public
 ```
 
-Release notes live in `releases-public/`.
+Only the current release's notes are bundled, in `releases-public/`.
 
 ## Licences
 

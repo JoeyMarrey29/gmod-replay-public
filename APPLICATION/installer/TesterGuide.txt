@@ -1,5 +1,5 @@
-GMod Replay - Test Build
-=======================
+GMod Replay - Private Edition
+=============================
 
 Requirements
 ------------
@@ -131,7 +131,7 @@ All bundled release notes are available offline, without GitHub sign-in.
 Existing installation path, settings and caches are preserved by upgrades.
 Update errors appear in the app. Diagnostic and installer logs are under
 %LOCALAPPDATA%\GModReplay\updates (separate from the release-history panel).
-These test installers are not yet publisher-signed; SmartScreen may warn.
+These installers are not yet publisher-signed; SmartScreen may warn.
 
 Combat visuals
 --------------
@@ -233,7 +233,7 @@ muffle them.
 
 Reporting problems
 ------------------
-This is an unsigned test build. Windows may show a publisher/SmartScreen warning.
+This is an unsigned build. Windows may show a publisher/SmartScreen warning.
 Verify the installer came from the person who sent it; do not disable antivirus.
 
 Report the demo name, playback time, what happened, and a screenshot if useful.

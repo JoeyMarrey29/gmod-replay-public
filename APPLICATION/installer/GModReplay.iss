@@ -35,7 +35,11 @@ AppId={#AppIdGuid}
 AppName={#ProductName}
 AppVersion={#AppVersion}
 AppMutex={#MutexName}
+#if Pos("-test.", AppVersion) > 0
 AppVerName={#ProductName} {#AppVersion} (Test Build)
+#else
+AppVerName={#ProductName} {#AppVersion}
+#endif
 DefaultDirName={localappdata}\Programs\{#ProductName}
 DefaultGroupName={#ProductName}
 PrivilegesRequired=lowest

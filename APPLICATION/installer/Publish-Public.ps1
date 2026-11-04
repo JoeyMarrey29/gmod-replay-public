@@ -41,12 +41,15 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Could not prepare the public main branch.' }
     Get-ChildItem -LiteralPath $clone -Force | Where-Object Name -ne '.git' | Remove-Item -Recurse -Force
 
-    # Private release history and the private README stay in version A.
+    # Keep both editions' historical notes in version A; B gets only this release's notes.
     $archive = "$work\source.tar"
-    & git -C $root archive --format=tar -o $archive $commit -- . ':(exclude)releases' ':(exclude)CHANGELOG.md' ':(exclude)README.md'
+    & git -C $root archive --format=tar -o $archive $commit -- . ':(exclude)releases' `
+        ':(exclude)releases-public' ':(exclude)CHANGELOG.md' ':(exclude)README.md'
     if ($LASTEXITCODE -ne 0) { throw 'Could not export the release source.' }
     & tar -xf $archive -C $clone
     if ($LASTEXITCODE -ne 0) { throw 'Could not unpack the release source.' }
+    New-Item -ItemType Directory -Force -Path "$clone\releases-public" | Out-Null
+    Copy-Item -LiteralPath $notes -Destination "$clone\releases-public"
     Copy-Item -LiteralPath "$PSScriptRoot\PublicReadme.md" -Destination "$clone\README.md"
 
     & git -C $clone add -A

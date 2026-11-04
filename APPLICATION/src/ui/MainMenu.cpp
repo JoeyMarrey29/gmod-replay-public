@@ -1712,9 +1712,9 @@ void MainMenu::draw_updates(HDC dc, int width, int height) {
     fill({x + 24, y + 100, right - 24, y + 166}, RGB(25, 39, 58));
     SelectObject(dc, caption_font);
     if constexpr (gmod::edition::is_public) {
-        text({x + 40, y + 109, right - 40, y + 129}, L"PUBLIC EDITION", RGB(142, 166, 200), DT_SINGLELINE);
+        text({x + 40, y + 109, right - 40, y + 129}, L"AUTOMATIC UPDATES", RGB(142, 166, 200), DT_SINGLELINE);
         SelectObject(dc, header);
-        text({x + 40, y + 134, right - 40, y + 161}, L"No GitHub account needed",
+        text({x + 40, y + 134, right - 40, y + 161}, L"Enabled by default",
              RGB(230, 239, 254), DT_SINGLELINE | DT_END_ELLIPSIS);
         SelectObject(dc, body);
     } else {
@@ -1729,7 +1729,7 @@ void MainMenu::draw_updates(HDC dc, int width, int height) {
     }
     fill({x + 24, y + 177, right - 24, y + 235}, RGB(25, 39, 58));
     text({x + 40, y + 192, right - 40, y + 222},
-         gmod::edition::is_public ? L"Checks run on launch" : L"Checks run on launch for linked accounts",
+         gmod::edition::is_public ? L"Checks and downloads on launch; asks before installing" : L"Checks run on launch for linked accounts",
          RGB(221, 231, 247), DT_SINGLELINE | DT_VCENTER);
     if (status == "ready") {
         button({x + 24, y + 250, x + 206, y + 287}, L"Update now", "install-now", !working);
