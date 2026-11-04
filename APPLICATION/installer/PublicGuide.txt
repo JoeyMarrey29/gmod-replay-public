@@ -1,0 +1,254 @@
+GMod Replay - Public Edition
+============================
+
+Requirements
+------------
+Windows 10/11, 64-bit, and a DirectX 12-capable graphics card.
+Garry's Mod installed through Steam, with the PERP content and map downloaded.
+Join PERP at least once after a content update so server-downloaded files and
+the server Lua cache are present. Keep them available when opening a demo.
+
+The installer includes the viewer, a self-contained parser and the required
+C++ runtime DLLs. You do not need to install .NET or Python.
+It does not include demos, game archives, maps, or someone else's settings.
+Content is read from your own GMod/Workshop installation.
+Replay selects the map named in the demo header, not the newest installed version.
+If that map is unavailable, install the matching map; another version is not
+silently substituted. Its embedded asset pakfile comes from that selected BSP,
+while the server Lua pack is looked up separately using the demo's pack ID.
+If a demo ends while writing a command or has no dem_stop record, Replay keeps
+all complete commands and discards only the incomplete final command. The
+original demo file is not changed, and an unfinished final event cannot be shown.
+Unclosed demos with an unset duration now use the complete recorded tick range
+and the server tick rate, so their timeline is not compressed to 15 minutes.
+GMod's custom entity tables and dormant entity state are decoded without dropping
+the rest of a packet, restoring recorded placed props, held guns and view models.
+For older demos, clothing decoding also needs that recording's matching server
+Lua pack in garrysmod\download\data\gluapack. Replay searches Steam's registered
+library folders for the pack. Keep existing downloaded packs: joining the server
+today may not download an old version. The map BSP and the server Lua pack are
+separate files; if an old Lua pack has been deleted, it cannot be recovered from
+the demo or supplied by using the currently installed map.
+
+Getting started
+---------------
+1. Launch GMod Replay from the Start menu.
+2. Choose Open Demo. The browser should find your GMod phdemos folder.
+   Use Change folder if your demos are somewhere else.
+   Each demo row shows its filename, with the readable recording date beneath
+   when recognized, and its size on the right. Renamed demos without a date in
+   their filename show a labelled Modified date from the file instead. Moving a
+   demo does not hide its date; the original recording date cannot be recovered
+   after renaming unless it is still present in the filename.
+3. Open a .dem recording. The first load builds local indexes and a data cache.
+   Loading a large demo can take a minute or longer.
+   Click Cancel or press Escape during demo parsing or asset loading to return
+   home. The final GPU setup is not interruptible and shows Finishing instead.
+
+Controls
+--------
+Left click a player: select their information card.
+Double-click a player: follow them.
+Click empty space, or right-click: clear selection.
+Drag: turn the camera without selecting.
+F: toggle free view. R: toggle first/third person.
+Following a player in a vehicle defaults to third person.
+Hold P: players. Tab: playback controls.
+Tap Shift: play/pause (holding Shift is the free-view speed boost).
+Escape: options. Choose Back to main menu and confirm to unload the current scene.
+F10 no longer unloads a demo.
+The key left of 1: developer console.
+F1, or Escape > Controls: full list of replay controls.
+While Tab is up in free view, or in third person, click and drag to look around.
+Player card: drag across text to highlight and copy it (Ctrl+C also copies);
+double-click a value to copy it.
+Click a vehicle to see who owns it, its registration and its current driver.
+
+Cache Settings
+--------------
+Open Cache Settings... on the home menu for the in-app cache popup.
+Session Cache and Disk Demo Cache are independent and off by default.
+When Session Cache is enabled, returning
+home unloads playback but keeps all visited maps/renderers and parsed recordings.
+The first opening of a demo still parses it. Reopening an unchanged recording
+restores cached parser output and binds fresh playback/actors; new demo assets
+may need loading. Returning to an earlier map restores its retained renderer.
+Changed recording files invalidate their parsed entries, and changed map content
+rebuilds the affected map. Different recorded doors/shutters rebind without rebuilding the map;
+unrecorded brushes retain authored placement and baked lighting.
+Turning the option off or refreshing PERP assets
+releases all retained maps, assets and parsed recordings immediately.
+The choice is saved, but cached data does not survive exit.
+RAM/VRAM usage is uncapped and can grow substantially; Windows may page GPU
+resources when memory is low. Demo playback, poses, effects and audio are reset,
+not resumed from the old demo. Cached recordings retain their decoded voice files.
+
+Disk Demo Cache stores native parsed data and voice audio across restarts in
+%LOCALAPPDATA%\GModReplay\DemoCache. Content hashing recognizes moved/renamed copies;
+changed contents or parser/native format changes require reparsing.
+Maps/GPU resources are not stored on disk, so cache hits still need map loading
+unless Session Cache already holds that map. Hashing, disk reads and binding also
+take time; "cached" does not mean instant.
+Use the Disk limit slider (1-100 GiB; default 25 GiB). Click/drag and release to
+save, or select it and use Left/Right for 1 GiB adjustments, Page Up/Down for
+10 GiB, Home/End for minimum/maximum. Escape cancels an unfinished drag.
+Existing saved limits are preserved within the slider's range.
+Reductions that would remove cached recordings require confirmation after release;
+Cancel (the default) or Escape restores the previous limit without deleting anything.
+Least-recently-used recordings are removed first. A recording whose parsed
+snapshot exceeds the limit is not retained. Parsed data/voice can exceed the source
+demo's size. Reducing the limit cleans up immediately.
+Clear Disk Demo Cache... requires confirmation and preserves original demos.
+Turning Disk Demo Cache off keeps stored entries but stops reading/writing them.
+Refreshing PERP assets clears both caches. Corrupt/unavailable disk cache entries
+are logged and the original recording is parsed normally.
+
+Public releases and updates
+---------------------------
+This is the public edition of GMod Replay. It needs no GitHub account and has no
+sign-in screen. The main menu's Updates option checks the public releases page
+and offers Update now, Update on app close or Not now. Checks verify each
+installer's repository, size and SHA256.
+Recordings can only be opened once they are at least 15 real-world minutes old,
+measured from the end of the recording. Copying, moving or renaming a demo does
+not reset this. A demo that is too new shows how many minutes are left.
+The Update log option shows the public edition's release notes, offline.
+Update errors appear in the app. Diagnostic and installer logs are under
+%LOCALAPPDATA%\GModReplayPublic\updates.
+These installers are not yet publisher-signed; SmartScreen may warn.
+Combat visuals
+--------------
+Recorded shots produce muzzle flashes at supported weapon attachments.
+Recorded impacts produce bullet holes and blood splatters on supported map,
+rigid prop, rotating-door and moving map-brush surfaces. Decals last 60 seconds of demo time,
+fading over the final 5 seconds. Pause freezes the fade; seeking restores the
+decals appropriate for that time. Use the decal/muzzle-flash options to hide them.
+Rotating doors now use recorded pitch, yaw and roll.
+Recorded flesh impacts also produce a short-lived airborne blood mist, controlled
+by the decal option. It freezes on pause and restores deterministically on seek.
+The mist now has 2.5 times the earlier radius and stronger opacity.
+This is a native recreation, not a bit-exact reproduction of GMod's particles.
+Only recorded hit effects produce mist: PERP may omit the shooter's own predicted
+effects from the demo, so those hits are not fabricated from gunfire.
+Skinned impact receivers are not supported.
+
+Weapon attachments, scopes and inventory
+---------------------------------------
+Recorded attachment IDs are resolved against the demo's exact historical Lua
+registry, not a guessed list of sniper IDs. Fitted models follow the weapon bones
+in first and third person, updating with the recorded attachment list.
+While aiming through a fitted magnified optic, its actual lens displays a
+512x512 world render at the server Lua's field of view, with the model's reticle.
+The surrounding scene stays unzoomed; the optic housing, weapon and hands remain
+visible. The old full-screen scope mask and scope_zoom override were removed.
+The active lens preserves the rendered scene's brightness instead of applying
+the gun's ambient lighting a second time; the optic housing remains normally lit.
+Player outlines inside the lens use that same magnified camera and visibility
+setting. Unzoomed outlines stay behind the weapon and lens. Names and player
+selection inside the lens use its animated mesh and texture coordinates, while
+names outside it retain the normal view. No fixed screen-space scope circle is
+used, so lens clipping follows the optic and window size.
+Build.dem's L115A3 with ACOG was checked at 21:11 and while aiming at 21:13.04;
+that historical ACOG uses a 10-degree lens field of view.
+Alternate-sight key state is client-only in this Lua pack and is not reconstructed.
+Attachment-specific laser/flashlight effects and magazine animation callbacks are
+not recreated by importing their meshes.
+Inventory and held weapons now honor recorded owner changes and entity deletion,
+including the separate deletion list for dormant entities. This removes stripped
+or deleted job/event weapons rather than retaining them as phantom items.
+The September 30 Gun Game recording passes checks for the initial weapon strip,
+OTS-33 to P99 advancement, the corresponding held weapon, and rewind.
+Locally reconstructed shots use the fitted attachment's historical sound
+override, including suppressed samples and their authored level/volume.
+Flash hiders and compensators without a sound override keep the normal sample.
+Removal and seeking update sound selection; explicit server gun sounds are
+played as recorded rather than replaced or doubled.
+
+Player and map playback fixes
+-----------------------------
+Police traffic uniforms using ABGR8888 textures now decode into RGBA, preserving
+their colours and alpha instead of displaying an untextured white uniform.
+Accessories with independent mesh roots follow the first merged bone in their
+default animation, fixing the hockey mask's face placement without model offsets.
+Driver positions use each vehicle model's passenger-feet attachment when available.
+Vehicle angle-only packets no longer interrupt position interpolation.
+Passenger seating still needs further validation; these driver changes do not
+establish that every passenger is positioned correctly.
+Some older demos still show unknown Steam names/IDs. Their identity text exists
+but reliable player-to-entity bindings are unavailable; guessed slots are rejected
+rather than assigning another person's identity.
+Player re-entry restores stance flags from the packet's selected entity baseline,
+then applies explicit updates. Playback no longer carries an old crouch through
+a new standing snapshot. Recorded crouches are retained, including after seeking.
+Map wall textures retain their Source UV orientation instead of being flipped
+vertically. Model textures, decals and lightmaps keep their existing mappings.
+Doors hold their last recorded angle across idle gaps instead of slowly rotating
+toward an opening recorded minutes later. Closely spaced movement updates still
+interpolate smoothly.
+Door sounds use their WAV loop cues: a later stop command no longer turns a
+one-shot movement sound into an infinite loop. A new sound on the same entity's
+non-auto channel also replaces the old loop, including when restoring after seek.
+Dead/knocked-out players use their recorded ragdoll and body model. If the demo
+does not contain a usable body pose, the standing body, clothing and held item
+are hidden instead of displaying a living player. No replacement pose is invented.
+Held items can remain visible with a normal/passive hold type (including bottles);
+an explicitly empty server WorldModel still means there is no third-person model.
+Recorded attack events drive fist/melee gestures without creating fake gunshots.
+Model activities select attack sequences when sequence names differ. The
+recorder's view-model timeline remains authoritative; another player's custom
+Lua-selected first-person animation may not exactly match the original.
+Sliding doors/shutters and parented brush models follow recorded positions and
+rotations, including attached visible model leaves and elevator cabs. Invisible
+zero-face brush controls do not borrow geometry from other models.
+Recorded model visibility overrides an authored disabled state.
+Missing recorded child angles retain the map-authored local rotation.
+Unrecorded brushes keep their map placement; leaving the recorder's
+visibility holds the last known position rather than removing map geometry.
+Moving brush models currently use ambient model lighting rather than baked
+brush lightmaps. Unknown/out-of-view movement is not simulated.
+The server's ph_soundplay messages now contribute their recorded sample,
+position, level, pitch and volume alongside existing Source and gun sounds.
+Sounds/events omitted by the recording cannot be recovered.
+Crossing-button one-shots honor their WAV loop metadata instead of repeating a
+short sample between recorded messages. Recorded battering ram hits have a
+longer audible range without boosting unrelated wood impacts; walls still
+muffle them.
+
+Reporting problems
+------------------
+This is an unsigned test build. Windows may show a publisher/SmartScreen warning.
+Verify the installer came from the person who sent it; do not disable antivirus.
+
+Report the demo name, playback time, what happened, and a screenshot if useful.
+Logs are in the build folder beside GModReplay.exe (normally under
+%LOCALAPPDATA%\Programs\GMod Replay).
+Check logs before sharing: they can contain local paths and player names.
+
+Known issues include unavailable/unrecorded models or poses and slow material loading.
+Fires do not show yet.
+Firing and bullet-impact smoke puffs now expand and fade at recorded events.
+Muzzle smoke uses a mapped weapon attachment and the player's shot-time pose;
+missing muzzle poses are logged rather than guessed from the player's eyes.
+Surface smoke uses PERP impact/exit position, normal, material and scale.
+Missing impact effects are not inferred from decals or gunshot sounds.
+Muzzle smoke follows the muzzle-flash setting; impact smoke follows decals.
+Pause, rewind and seeking reproduce the same particles without stale trails.
+Grenade explosions may be missing, including their effects and sounds. Missing
+detonations are not reconstructed from a disappearing projectile.
+Third-person camera collision uses a camera-sized volume against world surfaces,
+glass, rigid props and recorded moving doors. It pulls closer immediately when
+blocked and returns to its 220-unit orbit when clear. Its pivot lowers while
+crouched or incapacitated. Free view and first person are unchanged.
+This uses available rendered surfaces, not GMod's full physics collision system:
+missing models, invisible collision brushes and animated character/vehicle
+meshes do not block the camera.
+Check that closing the window also stops all audio.
+
+Uninstall through Windows Settings > Apps. Generated caches/logs may remain.
+No game installation files are modified or removed.
+
+Licenses and source
+-------------------
+Third-party notices are in licenses.
+The modified GPLv3 parser source and build instructions are included in
+source\gmoddem-source.zip. Its dependencies are restored with NuGet.

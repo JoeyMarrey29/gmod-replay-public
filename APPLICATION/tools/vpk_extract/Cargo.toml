@@ -1,0 +1,7 @@
+[package]
+name = "vpk_extract"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+valve_pak = "0.1.0"

@@ -1,0 +1,44 @@
+# Build
+[Bb]in/
+[Oo]bj/
+[Dd]ist/
+artifacts/
+TestResults/
+*.binlog
+
+# IDE / OS
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Demos and local parser output
+*.dem
+*.wav
+*.gmodvoice
+*.window.json
+*.net.jsonl
+out-*.json
+*.info.txt
+
+# Cursor / local scratch
+.cursor/
+*.canvas.tsx
+_*.ps1
+
+# Secrets
+.env
+.env.*
+*.pfx
+*.snk
+
+# NuGet (restored, not committed)
+*.nupkg
+*.snupkg
+project.lock.json
+project.fragment.lock.json

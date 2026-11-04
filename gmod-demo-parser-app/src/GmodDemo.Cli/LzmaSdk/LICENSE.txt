@@ -1,0 +1,2 @@
+LZMA SDK (C# decoder only). Public domain. Igor Pavlov / 7-Zip.
+https://www.7-zip.org/sdk.html
