@@ -14,6 +14,14 @@ constexpr int Padding = 16;
 constexpr int BarWidth = 10;
 constexpr int PanelWidth = 720;
 
+RECT panel_rect(int width, int height) {
+    const int panel_width = std::min(PanelWidth, std::max(width - 40, 240));
+    const int panel_height = std::max(height - 160, 160);
+    const int x = (width - panel_width) / 2;
+    const int y = (height - panel_height) / 2 - 20;
+    return {x, y, x + panel_width, y + panel_height};
+}
+
 constexpr COLORREF Background = RGB(16, 18, 24);
 constexpr COLORREF HeaderColor = RGB(24, 27, 36);
 constexpr COLORREF Divider = RGB(48, 52, 64);
@@ -186,9 +194,10 @@ void PlayerListPanel::update() {
     GetClientRect(owner_, &client);
     const int client_width = client.right - client.left;
     const int client_height = client.bottom - client.top;
-    const int width = std::min(PanelWidth, std::max(client_width - 40, 240));
-    const int height = std::max(client_height - 160, 160);
-    POINT origin{(client_width - width) / 2, (client_height - height) / 2 - 20};
+    const RECT panel = panel_rect(client_width, client_height);
+    const int width = panel.right - panel.left;
+    const int height = panel.bottom - panel.top;
+    POINT origin{panel.left, panel.top};
     ClientToScreen(owner_, &origin);
     if (origin.x != placed_x_ || origin.y != placed_y_ || width != placed_width_
         || height != placed_height_) {
@@ -224,11 +233,33 @@ void PlayerListPanel::paint() {
     HDC dc = CreateCompatibleDC(target);
     HBITMAP bitmap = CreateCompatibleBitmap(target, std::max(width, 1), std::max(height, 1));
     HGDIOBJ old_bitmap = SelectObject(dc, bitmap);
+    draw(dc, width, height);
+    BitBlt(target, 0, 0, width, height, dc, 0, 0, SRCCOPY);
+    SelectObject(dc, old_bitmap);
+    DeleteObject(bitmap);
+    DeleteDC(dc);
+    EndPaint(window_, &paint_struct);
+}
+
+bool PlayerListPanel::paint_frame(HDC dc, int width, int height) {
+    if (!visible_) return false;
+    const RECT panel = panel_rect(width, height);
+    const int saved = SaveDC(dc);
+    IntersectClipRect(dc, panel.left, panel.top, panel.right, panel.bottom);
+    SetViewportOrgEx(dc, panel.left, panel.top, nullptr);
+    draw(dc, panel.right - panel.left, panel.bottom - panel.top);
+    RestoreDC(dc, saved);
+    return true;
+}
+
+void PlayerListPanel::draw(HDC dc, int width, int height) {
+    const RECT client{0, 0, width, height};
     SetBkMode(dc, TRANSPARENT);
 
     fill(dc, client, Background);
 
-    const bool overflow = max_scroll() > 0;
+    const int scroll_max = std::max(content_height() - std::max(height - HeaderHeight, 0), 0);
+    const bool overflow = scroll_max > 0;
     const int list_right = width - (overflow ? BarWidth + 6 : 0);
     const int first = std::max(scroll_ / RowHeight, 0);
     for (int index = first; index < static_cast<int>(rows_.size()); ++index) {
@@ -293,7 +324,7 @@ void PlayerListPanel::paint() {
         const int thumb_height = std::max(
             track_height * track_height / std::max(content_height(), 1), 36);
         const int travel = std::max(track_height - thumb_height, 1);
-        const int thumb_top = track_top + scroll_ * travel / std::max(max_scroll(), 1);
+        const int thumb_top = track_top + scroll_ * travel / std::max(scroll_max, 1);
         RECT thumb{track.left, thumb_top, track.right, thumb_top + thumb_height};
         rounded(dc, thumb, BarWidth, dragging_bar_ ? Accent : BarThumb);
     }
@@ -303,11 +334,6 @@ void PlayerListPanel::paint() {
     FrameRect(dc, &border, border_brush);
     DeleteObject(border_brush);
 
-    BitBlt(target, 0, 0, width, height, dc, 0, 0, SRCCOPY);
-    SelectObject(dc, old_bitmap);
-    DeleteObject(bitmap);
-    DeleteDC(dc);
-    EndPaint(window_, &paint_struct);
 }
 
 LRESULT PlayerListPanel::handle(UINT message, WPARAM wparam, LPARAM lparam) {

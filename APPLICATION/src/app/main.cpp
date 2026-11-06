@@ -2186,11 +2186,15 @@ private:
                     }
                 }
                 bool inside = true;
-                for (const auto& plane : planes) {
-                    if (plane[0] * instance.center[0] + plane[1] * instance.center[1]
-                        + plane[2] * instance.center[2] + plane[3] < -instance.radius) {
-                        inside = false;
-                        break;
+                // Bonemerged arms move out of their third-person bind-pose bounds.
+                // First-person geometry must not be culled using those stale bounds.
+                if (!variant.first_person) {
+                    for (const auto& plane : planes) {
+                        if (plane[0] * instance.center[0] + plane[1] * instance.center[1]
+                            + plane[2] * instance.center[2] + plane[3] < -instance.radius) {
+                            inside = false;
+                            break;
+                        }
                     }
                 }
                 if (inside) {
@@ -4831,8 +4835,6 @@ public:
         create_player_list(window);
         radio_hud_ = std::make_unique<gmod::ui::RadioHud>(window, [this] { radio_muted_ = !radio_muted_; });
         dialog_hud_ = std::make_unique<gmod::ui::DialogHud>(window);
-        hud_ = std::make_unique<gmod::ui::Hud>(window);
-        if (!g_headless) hud_->set_visible(true);
         esc_menu_ = std::make_unique<gmod::ui::EscMenu>(window, gmod::ui::EscMenuActions{
             [this] { close_esc_menu(); },
             [this] { g_menu_requested = true; },
@@ -4869,13 +4871,23 @@ public:
                 }
             },
             [this] {
-                if (card_player_ >= 0 && !muted_voices_.erase(card_player_)) muted_voices_.insert(card_player_);
+                const int player = card_player_;
+                if (player >= 0 && !muted_voices_.erase(player)) muted_voices_.insert(player);
                 last_card_refresh_ = 0;
             },
             [this] {
                 card_player_ = -1;
                 card_vehicle_ = -1;
             });
+        spectator_card_ = std::make_unique<gmod::ui::PlayerCard>(
+            window, [] {},
+            [this] {
+                if (follow_ >= 0)
+                    isolated_voice_ = effective_isolation() == follow_ ? -1 : follow_;
+            },
+            [this] {
+                if (follow_ >= 0 && !muted_voices_.erase(follow_)) muted_voices_.insert(follow_);
+            }, [] {});
         g_free_view = free_view_;
     }
 
@@ -5072,6 +5084,43 @@ public:
         std::ofstream(folder/L"melee-render-test.txt") << "PASS recorded fist swing, clothing, restart counters, third-person attacks, missing melee audio and rewind\n";
     }
 
+    void test_first_person_arms(Dx12Foundation& renderer,const std::filesystem::path& folder) {
+        const int original_follow = follow_;
+        const bool original_free = free_view_, original_first = first_person_;
+        const float original_time = time_;
+        std::map<std::string,int> tested;
+        std::set<std::pair<std::string,std::size_t>> captured;
+        for (float sample_time=original_time;sample_time<std::min(demo_.duration,viewable_);sample_time+=20.0f) {
+        seek(sample_time);
+        for (std::size_t index=0;index<demo_.players.size();++index) {
+            const auto& player=demo_.players[index];
+            if (player.npc || static_cast<int>(index)==demo_.recorder_player) continue;
+            gmod::demo::PlayerPose pose;
+            if (!gmod::demo::sample_player(player,time_,pose)
+                || gmod::demo::player_incapacitated(player,time_)
+                || (pose.flags & gmod::demo::PlayerFlagSeated)!=0) continue;
+            const auto weapon=gmod::demo::held_weapon_at(demo_,player,time_).class_name;
+            if ((weapon!="roleplay_fists" && weapon!="roleplay_keys") || tested[weapon]>=3
+                || captured.contains({weapon,index})) continue;
+            follow_=static_cast<int>(index);free_view_=false;first_person_=true;
+            update(renderer,0,false);renderer.render();
+            if (vm_id_<0 || rendered_arm_parts_==0)
+                throw std::runtime_error("Missing first-person arms for "+player.name+" holding "+weapon);
+            renderer.capture_bmp((folder/(weapon+"-"+std::to_string(index)+".bmp")).wstring());
+            std::cout << "ARMS_RENDER player=" << player.name << " index=" << index
+                << " time=" << time_ << " weapon=" << weapon << " clothing_parts=" << rendered_arm_parts_ << '\n';
+            ++tested[weapon];
+            captured.emplace(weapon,index);
+        }
+        if (tested["roleplay_fists"]>=3 && tested["roleplay_keys"]>=3) break;
+        }
+        if (tested["roleplay_fists"]<2 || tested["roleplay_keys"]<1)
+            throw std::runtime_error("Arm render fixture needs two fist players and one keys player.");
+        follow_=original_follow;free_view_=original_free;first_person_=original_first;
+        seek(original_time);
+        update(renderer,0,false);renderer.render();
+    }
+
     void test_back_weapons(Dx12Foundation& renderer,const std::filesystem::path& folder) {
         const auto player=std::find_if(demo_.players.begin(),demo_.players.end(),[](const auto& p){return p.name=="sl_cx";});
         if(player==demo_.players.end()) throw std::runtime_error("Back gun render test requires the sl_cx recording.");
@@ -5254,7 +5303,7 @@ public:
             throw std::runtime_error("Fire rendering, pause, extinguish or rewind failed.");
         demo_.fires=original;fire_playback_.reset();seek(original_time);update(renderer,0,false);renderer.render();
         renderer.set_frame_text_painter([this,&renderer](HDC dc,int width,int height) {
-            return paint_frame_labels(dc,width,height,renderer);
+            return paint_frame_overlays(dc,width,height,renderer);
         });
         std::ofstream(folder/L"fire-render-test.txt") << "PASS controlled fire sizes, animation, pause, extinguish and exact rewind\n";
     }
@@ -5364,18 +5413,37 @@ public:
         preview_command_ = command;
     }
 
-    bool paint_frame_labels(HDC dc,int width,int height,const Dx12Foundation& renderer) {
-        if (!gmod::ui::settings().names) return false;
+    bool paint_frame_overlays(HDC dc,int width,int height,const Dx12Foundation& renderer) {
         camera_position_=renderer.listener_source();
-        const auto tags=build_view_tags(renderer,width,height);
-        if (tags.empty()) return false;
-        if (g_headless) std::cout << "FRAME_ESP labels=" << tags.size() << '\n';
-        gmod::ui::NameTags::paint(dc,width,height,tags,renderer.scope_overlay());
+        if (gmod::ui::settings().names) {
+            const auto tags=build_view_tags(renderer,width,height);
+            if (g_headless && !tags.empty()) std::cout << "FRAME_ESP labels=" << tags.size() << '\n';
+            gmod::ui::NameTags::paint(dc,width,height,tags,renderer.scope_overlay());
+        }
+        gmod::ui::Hud::paint(dc, width, height, build_hud_state());
+        if (!free_view_ && card_player_ >= 0 && card_player_ == follow_) {
+            card_player_ = -1;
+            last_card_refresh_ = 0;
+        }
+        if (spectator_card_) {
+            spectator_card_->update(build_card_state(true));
+            spectator_card_->paint_frame(dc, width, height);
+        }
+        if (player_card_) {
+            player_card_->update(build_card_state());
+            player_card_->paint_frame(dc, width, height);
+        }
+        if (timeline_ && (timeline_->visible() || preview_timeline_)) {
+            timeline_->update({time_, demo_.duration, playing_, reverse_, speed_index_,
+                               free_view_ ? std::wstring() : follow_name(), real_start_});
+            timeline_->paint_preview(dc, width, height);
+        }
+        if (player_list_) player_list_->paint_frame(dc, width, height);
         return true;
     }
 
-    // ESP labels are already in the captured swap-chain image. Remaining
-    // window-based controls/HUD are composited here for screenshot previews.
+    // Replay labels and player controls are already in the swap-chain image.
+    // Remaining window-based menus are composited here for screenshot previews.
     void paint_overlays(HDC dc, int width, int height, const Dx12Foundation& renderer,
                         const std::array<float, 3>& camera) {
         camera_position_ = camera;
@@ -5388,7 +5456,6 @@ public:
                     << " scoped_tags=" << std::count_if(tags.begin(), tags.end(), [](const auto& tag) { return tag.scoped; }) << "\n";
             }
         }
-        gmod::ui::Hud::paint(dc, width, height, build_hud_state());
         if (preview_console_) {
             if (!preview_ran_) {
                 preview_ran_ = true;
@@ -5401,11 +5468,6 @@ public:
             console_->paint_preview(dc, width, height);
         }
         if (preview_menu_) esc_menu_->paint_preview(dc, width, height);
-        if (preview_timeline_ && timeline_) {
-            timeline_->update({time_, demo_.duration, playing_, reverse_, speed_index_,
-                               free_view_ ? std::wstring() : follow_name(), real_start_});
-            timeline_->paint_preview(dc, width, height);
-        }
     }
 
     // `focused` gates keyboard input; `delta` is the real elapsed time in seconds.
@@ -5460,7 +5522,6 @@ public:
         }
         if (radio_hud_) radio_hud_->update(options.radio_hud ? build_radio_state() : gmod::ui::RadioHudState{});
         if (dialog_hud_) dialog_hud_->update(options.dialogs ? build_dialog_state() : gmod::ui::DialogHudState{});
-        if (hud_) hud_->update(build_hud_state());
         if (esc_menu_) esc_menu_->update();
         if (console_) {
             if (console_->visible()) sync_console(false);
@@ -7004,20 +7065,25 @@ private:
     }
 
     // Everything the demo knows about the player in the info card.
-    gmod::ui::PlayerCardState build_card_state() const {
-        if (card_vehicle_ >= 0) return build_vehicle_card_state();
+    gmod::ui::PlayerCardState build_card_state(bool spectator = false) const {
+        const bool spectating = spectator && !free_view_ && follow_ >= 0;
+        if (spectator && !spectating) return {};
+        if (!spectating && card_vehicle_ >= 0) return build_vehicle_card_state();
         gmod::ui::PlayerCardState state;
-        if (card_player_ < 0 || static_cast<std::size_t>(card_player_) >= demo_.players.size()) return state;
-        const auto index = static_cast<std::size_t>(card_player_);
+        const int card_player = spectating ? follow_ : card_player_;
+        if (!spectator && !free_view_ && card_player == follow_) return state;
+        if (card_player < 0 || static_cast<std::size_t>(card_player) >= demo_.players.size()) return state;
+        const auto index = static_cast<std::size_t>(card_player);
         const auto& player = demo_.players[index];
         state.visible = true;
         const std::string steam = display_name(index);
         const std::string character = gmod::demo::character_name_at(player, time_);
         state.title = to_wide(character.empty() ? steam : character);
-        state.followed = follow_ == card_player_ && !free_view_;
+        if (spectating) state.spectator = to_wide(steam) + L" - " + state.title;
+        state.followed = follow_ == card_player && !free_view_;
         state.has_voice = player.voice_clips > 0;
-        state.solo = effective_isolation() == card_player_;
-        state.muted = muted_voices_.count(card_player_) != 0;
+        state.solo = effective_isolation() == card_player;
+        state.muted = muted_voices_.count(card_player) != 0;
         const auto add = [&](const wchar_t* label, std::wstring value) {
             state.rows.emplace_back(label, std::move(value));
         };
@@ -7100,7 +7166,7 @@ private:
         }
         bool talking = false;
         for (const auto& clip : demo_.voice) {
-            if (clip.player == card_player_ && clip.time <= time_ && time_ < clip.time + clip.duration) {
+            if (clip.player == card_player && clip.time <= time_ && time_ < clip.time + clip.duration) {
                 talking = true;
                 break;
             }
@@ -7294,6 +7360,22 @@ private:
         actions.pause = [this] { playing_ = false; };
         actions.set_speed = [this](int index) {
             speed_index_ = std::clamp(index, 0, static_cast<int>(std::size(kSpeeds)) - 1);
+        };
+        actions.get_esp = [] {
+            const auto& options = gmod::ui::settings();
+            return !options.outline_all_players ? 0 : options.names_through_walls ? 2 : 1;
+        };
+        actions.set_esp = [](int mode) {
+            auto& options = gmod::ui::settings();
+            const bool previous_outline = options.outline_all_players;
+            const bool previous_through_walls = options.names_through_walls;
+            options.outline_all_players = mode != 0;
+            options.names_through_walls = mode == 2;
+            if (!options.save()) {
+                options.outline_all_players = previous_outline;
+                options.names_through_walls = previous_through_walls;
+                std::cerr << "Could not save ESP settings; the playback-bar change was reverted.\n";
+            }
         };
         actions.skip = [this](float seconds) { seek(time_ + seconds); };
         actions.seek = [this](float seconds) { seek(seconds); };
@@ -9003,7 +9085,7 @@ private:
     std::unique_ptr<gmod::ui::RadioHud> radio_hud_;
     std::unique_ptr<gmod::ui::DialogHud> dialog_hud_;
     std::unique_ptr<gmod::ui::PlayerCard> player_card_;
-    std::unique_ptr<gmod::ui::Hud> hud_;
+    std::unique_ptr<gmod::ui::PlayerCard> spectator_card_;
     std::unique_ptr<gmod::ui::EscMenu> esc_menu_;
     std::unique_ptr<gmod::ui::GameConsole> console_;
     bool esc_open_ = false;
@@ -11363,6 +11445,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
         bool bank_baked_test = false;
         bool fist_impact_test = false;
         bool melee_render_test = false;
+        bool arms_render_test = false;
         bool back_weapons_test = false;
         bool identifiers_render_test = false;
         bool fire_render_test = false;
@@ -11483,6 +11566,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
                 reload_test = true;
             } else if (argument == L"--fist-impact-test") {
                 fist_impact_test = true;
+            } else if (argument == L"--arms-render-test") {
+                arms_render_test = true;
             } else if (argument == L"--melee-render-test") {
                 melee_render_test = true;
             } else if (argument == L"--back-weapons-render-test") {
@@ -11969,7 +12054,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
             if (preview_console_on) replay->preview_console(preview_console);
             if (demo_path) replay->set_real_start(demo_start_time_of_day(*demo_path));
             renderer.set_frame_text_painter([driver=replay.get(),&renderer](HDC dc,int width,int height) {
-                return driver->paint_frame_labels(dc,width,height,renderer);
+                return driver->paint_frame_overlays(dc,width,height,renderer);
             });
         }
         scene = LoadedScene{};
@@ -12050,6 +12135,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
             }
             if (fist_impact_test && replay) replay->test_fist_impacts(renderer,std::filesystem::path(screenshot_path).parent_path());
             if (melee_render_test && replay) replay->test_melee_render(renderer,std::filesystem::path(screenshot_path).parent_path());
+            if (arms_render_test && replay) replay->test_first_person_arms(renderer,std::filesystem::path(screenshot_path).parent_path());
             if (back_weapons_test && replay) replay->test_back_weapons(renderer,std::filesystem::path(screenshot_path).parent_path());
             if (identifiers_render_test && replay) replay->test_model_identifiers(renderer,std::filesystem::path(screenshot_path).parent_path());
             if (fire_render_test && replay) replay->test_fire_render(renderer,std::filesystem::path(screenshot_path).parent_path());

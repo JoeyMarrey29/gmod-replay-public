@@ -48,7 +48,7 @@ void box(HDC dc, const RECT& rect, COLORREF fill, COLORREF border) {
 bool HudState::operator==(const HudState& other) const {
     if (vehicle_camera != other.vehicle_camera || vehicle_free_look != other.vehicle_free_look
         || speed_visible != other.speed_visible || speed != other.speed || speed_unit != other.speed_unit
-        || hint != other.hint
+        || hint != other.hint || spectating != other.spectating
         || toast != other.toast || feed.size() != other.feed.size()) {
         return false;
     }
@@ -138,6 +138,24 @@ void Hud::paint(HDC dc, int width, int height, const HudState& state) {
     static const HFONT unit_font = make_font(15, FW_BOLD);
     SetBkMode(dc, TRANSPARENT);
 
+    if (!state.spectating.empty()) {
+        SelectObject(dc, feed_font);
+        const std::wstring label = L"Spectating: " + state.spectating;
+        RECT area{14, 14, std::max(width - 14, 14), 34};
+        SetTextColor(dc, RGB(0, 0, 0));
+        for (int dx = -1; dx <= 1; ++dx) {
+            for (int dy = -1; dy <= 1; ++dy) {
+                if (dx == 0 && dy == 0) continue;
+                RECT outline = area;
+                OffsetRect(&outline, dx, dy);
+                DrawTextW(dc, label.c_str(), static_cast<int>(label.size()), &outline,
+                          DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+            }
+        }
+        SetTextColor(dc, RGB(236, 238, 244));
+        DrawTextW(dc, label.c_str(), static_cast<int>(label.size()), &area,
+                  DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+    }
 
     // Kill and death feed, top right.
     SelectObject(dc, feed_font);

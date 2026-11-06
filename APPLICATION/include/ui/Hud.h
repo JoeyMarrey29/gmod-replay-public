@@ -25,6 +25,7 @@ struct HudState {
     std::vector<FeedLine> feed;  // newest first
     std::wstring hint;           // bottom-left tip, empty to hide
     std::wstring toast;          // short centred message ("Radio muted"); empty to hide
+    std::wstring spectating;     // Steam name - character name; empty in free view
 
     bool operator==(const HudState& other) const;
 };

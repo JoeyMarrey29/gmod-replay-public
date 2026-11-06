@@ -1,6 +1,7 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [string]$Repository = 'JoeyMarrey29/gmod-replay-public',
+    [string]$CommitMessage,
     [switch]$SkipBuild
 )
 # Moves the current private release (version A) to the public repository (version B):
@@ -60,7 +61,12 @@ try {
     }
     & git -C $clone diff --cached --quiet
     if ($LASTEXITCODE -ne 0) {
-        & git -C $clone commit -q -m "GMod Replay Public $version"
+        $publicCommitMessage = if ([string]::IsNullOrWhiteSpace($CommitMessage)) {
+            "GMod Replay Public $version"
+        } else {
+            $CommitMessage
+        }
+        & git -C $clone commit -q -m $publicCommitMessage
         if ($LASTEXITCODE -ne 0) { throw 'Could not commit the public source.' }
     }
     $publicCommit = & git -C $clone rev-parse HEAD

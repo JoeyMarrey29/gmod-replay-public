@@ -50,7 +50,7 @@ constexpr ControlLine Controls[]{
     {L"Click + drag", L"Turn the camera in third person, or in free view while\nthe Tab bar is open (the cursor is free there)"},
     {L"Playback", nullptr},
     {L"Tap Shift", L"Play / pause"},
-    {L"Tab", L"Show / hide the playback bar: seek, skip, speed"},
+    {L"Tab", L"Show / hide the playback bar: seek, skip, speed, ESP"},
     {L"Players and cars", nullptr},
     {L"Left click", L"Select the player or car under the cursor (the\ncrosshair while the mouse is captured)"},
     {L"Double click", L"Follow the player"},

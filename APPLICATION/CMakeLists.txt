@@ -191,7 +191,8 @@ target_compile_features(gmod-replay-bank-baked-tests PRIVATE cxx_std_20)
 target_compile_definitions(gmod-replay-bank-baked-tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_include_directories(gmod-replay-bank-baked-tests PRIVATE include third_party/lzma)
 add_executable(gmod-replay-frame-text-tests EXCLUDE_FROM_ALL
-    tests/FrameTextTests.cpp src/dx12/FrameTextOverlay.cpp src/ui/NameTags.cpp)
+    tests/FrameTextTests.cpp src/dx12/FrameTextOverlay.cpp src/ui/NameTags.cpp
+    src/ui/Hud.cpp src/ui/PlayerListPanel.cpp src/ui/PlayerCard.cpp src/ui/TimelineBar.cpp)
 target_compile_features(gmod-replay-frame-text-tests PRIVATE cxx_std_20)
 target_compile_definitions(gmod-replay-frame-text-tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_include_directories(gmod-replay-frame-text-tests PRIVATE include)

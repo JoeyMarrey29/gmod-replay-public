@@ -25,6 +25,8 @@ struct TimelineActions {
     std::function<void()> pause;
     std::function<void()> reverse;
     std::function<void(int)> set_speed;
+    std::function<int()> get_esp;
+    std::function<void(int)> set_esp;
     std::function<void(float)> skip;   // relative seconds
     std::function<void(float)> seek;   // absolute seconds
     std::function<void(bool)> scrub;   // true when a drag starts, false when it ends
@@ -70,6 +72,7 @@ private:
     std::vector<std::wstring> speed_labels_;
     TimelineActions actions_;
     TimelineState state_;
+    int esp_mode_ = 0;
     bool visible_ = false;
     bool dirty_ = true;
     bool tracking_leave_ = false;

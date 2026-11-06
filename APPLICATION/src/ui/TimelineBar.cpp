@@ -20,6 +20,8 @@ constexpr int ChipGap = 4;
 constexpr int NoHit = -1;
 constexpr int TrackHit = 10;
 constexpr int ChipBase = 100;
+constexpr int EspHit = 200;
+constexpr int EspButtonWidth = 148;
 
 enum Button { SkipBack = 0, Reverse = 1, PlayPause = 2, SkipForward = 3, ButtonCount = 4 };
 
@@ -112,7 +114,7 @@ struct TimelineBar::Layout {
     RECT track{};
     RECT buttons[ButtonCount]{};
     RECT clock{};
-    RECT follow{};
+    RECT esp{};
     std::vector<RECT> chips;
 };
 
@@ -129,7 +131,7 @@ TimelineBar::Layout TimelineBar::layout(int width) const {
     const int count = static_cast<int>(speed_labels_.size());
     if (count > 0) {
         const int available = std::max<int>(
-            width - Margin - static_cast<int>(result.clock.right) - 220, count * 30);
+            width - Margin - static_cast<int>(result.clock.right) - EspButtonWidth - 84, count * 30);
         const int chip_width = std::clamp((available - (count - 1) * ChipGap) / count, 30, 50);
         const int total = count * chip_width + (count - 1) * ChipGap;
         int chip_x = width - Margin - total;
@@ -138,11 +140,14 @@ TimelineBar::Layout TimelineBar::layout(int width) const {
                 {chip_x, ButtonTop, chip_x + chip_width, ButtonTop + ButtonHeight});
             chip_x += chip_width + ChipGap;
         }
-        result.follow = {result.clock.right + 8, ButtonTop,
-                         std::max<int>(result.chips.front().left - 12, result.clock.right + 8),
-                         ButtonTop + ButtonHeight};
+        const int esp_left = static_cast<int>(result.clock.right) + 8;
+        const int esp_right = static_cast<int>(result.chips.front().left) - 12;
+        result.esp = {esp_left, ButtonTop, std::min(esp_left + EspButtonWidth, esp_right),
+                      ButtonTop + ButtonHeight};
     } else {
-        result.follow = {result.clock.right + 8, ButtonTop, width - Margin, ButtonTop + ButtonHeight};
+        const int esp_left = static_cast<int>(result.clock.right) + 8;
+        result.esp = {esp_left, ButtonTop, std::min(esp_left + EspButtonWidth, width - Margin),
+                      ButtonTop + ButtonHeight};
     }
     return result;
 }
@@ -197,11 +202,14 @@ void TimelineBar::set_visible(bool visible) {
 }
 
 void TimelineBar::update(const TimelineState& state) {
+    const int esp_mode = actions_.get_esp ? std::clamp(actions_.get_esp(), 0, 2) : esp_mode_;
     const bool discrete_change = state.playing != state_.playing || state.reverse != state_.reverse
         || state.speed_index != state_.speed_index || state.follow != state_.follow
-        || state.duration != state_.duration || state.real_start != state_.real_start;
+        || state.duration != state_.duration || state.real_start != state_.real_start
+        || esp_mode != esp_mode_;
     if (discrete_change || state.time != state_.time) dirty_ = true;
     state_ = state;
+    esp_mode_ = esp_mode;
     if (!visible_) return;
 
     if (IsIconic(owner_) || !IsWindowVisible(owner_)) {
@@ -259,13 +267,15 @@ void TimelineBar::mouse_move(int x, int y) {
 
 namespace {
 
-int hit_test(const RECT& track, const RECT* buttons, const std::vector<RECT>& chips, int x, int y) {
+int hit_test(const RECT& track, const RECT* buttons, const RECT& esp,
+             const std::vector<RECT>& chips, int x, int y) {
     if (y >= TrackTop - 2 && y < TrackBottom && x >= track.left - 8 && x < track.right + 8) {
         return TrackHit;
     }
     for (int index = 0; index < ButtonCount; ++index) {
         if (inside(buttons[index], x, y)) return index;
     }
+    if (inside(esp, x, y)) return EspHit;
     for (std::size_t index = 0; index < chips.size(); ++index) {
         if (inside(chips[index], x, y)) return ChipBase + static_cast<int>(index);
     }
@@ -278,7 +288,7 @@ void TimelineBar::mouse_down(int x, int y) {
     RECT client{};
     GetClientRect(window_, &client);
     const auto lay = layout(client.right - client.left);
-    const int hit = hit_test(lay.track, lay.buttons, lay.chips, x, y);
+    const int hit = hit_test(lay.track, lay.buttons, lay.esp, lay.chips, x, y);
     if (hit == TrackHit) {
         scrubbing_ = true;
         if (actions_.scrub) actions_.scrub(true);
@@ -298,7 +308,7 @@ void TimelineBar::mouse_up(int x, int y) {
         scrubbing_ = false;
         if (actions_.scrub) actions_.scrub(false);
     } else if (pressed_button_ != NoHit
-               && pressed_button_ == hit_test(lay.track, lay.buttons, lay.chips, x, y)) {
+               && pressed_button_ == hit_test(lay.track, lay.buttons, lay.esp, lay.chips, x, y)) {
         switch (pressed_button_) {
         case SkipBack:
             if (actions_.skip) actions_.skip(-10.0f);
@@ -316,6 +326,9 @@ void TimelineBar::mouse_up(int x, int y) {
             break;
         case SkipForward:
             if (actions_.skip) actions_.skip(10.0f);
+            break;
+        case EspHit:
+            if (actions_.set_esp) actions_.set_esp((esp_mode_ + 1) % 3);
             break;
         default:
             if (pressed_button_ >= ChipBase && actions_.set_speed) {
@@ -368,7 +381,7 @@ void TimelineBar::draw(HDC dc, int width) {
 
     const auto lay = layout(width);
     const int hit = hover_x_ >= 0
-        ? hit_test(lay.track, lay.buttons, lay.chips, hover_x_, hover_y_) : NoHit;
+        ? hit_test(lay.track, lay.buttons, lay.esp, lay.chips, hover_x_, hover_y_) : NoHit;
     const bool track_active = scrubbing_ || hit == TrackHit;
 
     // Seek track.
@@ -449,9 +462,14 @@ void TimelineBar::draw(HDC dc, int width) {
     const std::wstring real = real_clock_text(state_.real_start, state_.time);
     if (!real.empty()) clock += L"   " + real;
     text_in(dc, clock, lay.clock, DT_LEFT | DT_VCENTER, Text);
-    if (!state_.follow.empty() && lay.follow.right > lay.follow.left) {
+    if (lay.esp.right > lay.esp.left) {
+        const bool selected = hit == EspHit || pressed_button_ == EspHit;
+        if (selected) rounded(dc, lay.esp, 10, Hover);
+        const wchar_t* modes[]{L"ESP: Off", L"ESP: Outline", L"ESP: Through walls"};
+        const int mode = std::clamp(esp_mode_, 0, 2);
         SelectObject(dc, small_font_);
-        text_in(dc, L"following " + state_.follow, lay.follow, DT_LEFT | DT_VCENTER, MutedText);
+        text_in(dc, modes[mode], lay.esp, DT_CENTER | DT_VCENTER,
+                selected ? Text : MutedText);
     }
 
     // Speed presets.

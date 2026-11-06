@@ -11,6 +11,7 @@ namespace {
 constexpr wchar_t ClassName[] = L"GModReplayPlayerCard";
 constexpr int CardWidth = 360;
 constexpr int Pad = 12;
+constexpr int HeaderHeight = 42;
 constexpr int TitleHeight = 26;
 constexpr int LabelWidth = 96;
 constexpr int RowGap = 4;
@@ -110,20 +111,44 @@ RECT PlayerCard::cross_rect() const {
     return {CardWidth - Pad - 18, Pad, CardWidth - Pad, Pad + 18};
 }
 
+RECT PlayerCard::collapse_rect() const {
+    return {CardWidth - Pad - 44, Pad, CardWidth - Pad - 26, Pad + 18};
+}
+
 // Word-wraps the title and every value into lines, so drawing, hit-testing and highlighting
 // all agree on where each character is.
+int PlayerCard::header_height(HDC dc, const PlayerCardState& state) const {
+    if (state.spectator.empty()) return HeaderHeight;
+    const auto previous = SelectObject(dc, label_font());
+    RECT header{Pad, Pad, collapse_rect().left - 8, Pad};
+    const std::wstring text = L"Spectating: " + state.spectator;
+    DrawTextW(dc, text.c_str(), -1, &header, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
+    SelectObject(dc, previous);
+    return std::max<int>(HeaderHeight, header.bottom + Pad);
+}
+
+bool PlayerCard::header_at(POINT at) const {
+    HDC dc = GetDC(window_);
+    const int height = header_height(dc, state_);
+    ReleaseDC(window_, dc);
+    const RECT header{0, 0, CardWidth, height};
+    const RECT cross = cross_rect();
+    return PtInRect(&header, at)
+        && !(state_.vehicle && state_.spectator.empty() && PtInRect(&cross, at));
+}
+
 PlayerCard::Layout PlayerCard::layout(HDC dc, const PlayerCardState& state) const {
     Layout result;
     result.segments.push_back({L"", state.title, title_font(), state.title_color});
     for (const auto& [label, value] : state.rows) {
         result.segments.push_back({label, value.empty() ? L"-" : value, body_font(), RGB(235, 235, 235)});
     }
-    int y = Pad;
+    int y = state.spectator.empty() ? Pad : header_height(dc, state);
     for (int segment = 0; segment < static_cast<int>(result.segments.size()); ++segment) {
         const auto& item = result.segments[static_cast<std::size_t>(segment)];
         const bool title = segment == 0;
         const int x = title ? Pad : Pad + LabelWidth;
-        const int width = title ? CardWidth - 2 * Pad - 24 : CardWidth - 2 * Pad - LabelWidth;
+        const int width = title ? collapse_rect().left - 8 - Pad : CardWidth - 2 * Pad - LabelWidth;
         HGDIOBJ previous = SelectObject(dc, item.font);
         TEXTMETRICW metrics{};
         GetTextMetricsW(dc, &metrics);
@@ -167,8 +192,9 @@ PlayerCard::Layout PlayerCard::layout(HDC dc, const PlayerCardState& state) cons
 
 int PlayerCard::measure(const PlayerCardState& state) const {
     HDC dc = GetDC(window_);
-    const int bottom = layout(dc, state).bottom;
+    const int bottom = collapsed_ ? header_height(dc, state) : layout(dc, state).bottom;
     ReleaseDC(window_, dc);
+    if (collapsed_) return bottom;
     const int buttons = state.vehicle ? ButtonHeight : 2 * ButtonHeight + ButtonGap;
     return bottom + 8 + buttons + Pad;
 }
@@ -180,12 +206,14 @@ void PlayerCard::update(const PlayerCardState& state) {
         shown_ = false;
         selecting_ = false;
         anchor_ = caret_ = {};
+        collapsed_ = false;
         return;
     }
+    if (!shown_) collapsed_ = !state.spectator.empty();
     const int height = measure(state);
     RECT client{};
     GetClientRect(owner_, &client);
-    POINT origin{client.right - CardWidth - 12, 48};
+    POINT origin = state.spectator.empty() ? POINT{client.right - CardWidth, 0} : POINT{0, 0};
     ClientToScreen(owner_, &origin);
     const bool moved = origin.x != placed_x_ || origin.y != placed_y_ || height != height_;
     if (moved) {
@@ -201,7 +229,8 @@ void PlayerCard::update(const PlayerCardState& state) {
     }
     const bool same = state.title == state_.title && state.title_color == state_.title_color
         && state.rows == state_.rows && state.followed == state_.followed && state.vehicle == state_.vehicle
-        && state.solo == state_.solo && state.muted == state_.muted && state.has_voice == state_.has_voice;
+        && state.solo == state_.solo && state.muted == state_.muted && state.has_voice == state_.has_voice
+        && state.spectator == state_.spectator;
     if (same && !moved) return;
     // A different player or vehicle drops the highlight; live values updating keep it.
     if (state.title != state_.title || state.vehicle != state_.vehicle
@@ -262,7 +291,12 @@ bool PlayerCard::copy_selection() const {
 // The character position under `at`. `strict` requires the point to be on the text itself,
 // which is how a drag starts; while dragging, the nearest position is used.
 bool PlayerCard::caret_at(POINT at, bool strict, Caret& caret) const {
+    if (collapsed_) return false;
     HDC dc = GetDC(window_);
+    if (strict && !state_.spectator.empty() && at.y < header_height(dc, state_)) {
+        ReleaseDC(window_, dc);
+        return false;
+    }
     const auto view = layout(dc, state_);
     const Line* best = nullptr;
     int best_distance = 0;
@@ -302,6 +336,18 @@ bool PlayerCard::caret_at(POINT at, bool strict, Caret& caret) const {
     return found;
 }
 
+bool PlayerCard::paint_frame(HDC dc, int width, int height) const {
+    if (!shown_) return false;
+    const int saved = SaveDC(dc);
+    const int x = state_.spectator.empty() ? width - CardWidth : 0;
+    const int y = 0;
+    IntersectClipRect(dc, x, y, std::min(x + CardWidth, width), std::min(y + height_, height));
+    SetViewportOrgEx(dc, x, y, nullptr);
+    paint(dc, CardWidth, height_);
+    RestoreDC(dc, saved);
+    return true;
+}
+
 void PlayerCard::paint(HDC dc, int width, int height) const {
     RECT all{0, 0, width, height};
     HBRUSH fill = CreateSolidBrush(Background);
@@ -315,7 +361,20 @@ void PlayerCard::paint(HDC dc, int width, int height) const {
     SelectObject(dc, label_font());
     SetTextColor(dc, RGB(200, 200, 200));
     RECT cross = cross_rect();
-    DrawTextW(dc, L"X", -1, &cross, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    if (state_.vehicle && state_.spectator.empty())
+        DrawTextW(dc, L"X", -1, &cross, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    RECT collapse = collapse_rect();
+    DrawTextW(dc, collapsed_ ? L"+" : L"-", -1, &collapse,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, state_.spectator.empty() ? title_font() : label_font());
+    RECT header{Pad, Pad, collapse.left - 8, header_height(dc, state_) - Pad};
+    if (!state_.spectator.empty() || collapsed_) {
+        const std::wstring heading = !state_.spectator.empty() ? L"Spectating: " + state_.spectator : state_.title;
+        if (state_.spectator.empty()) SetTextColor(dc, state_.title_color);
+        DrawTextW(dc, heading.c_str(), -1, &header,
+                  DT_LEFT | DT_NOPREFIX | (state_.spectator.empty() ? DT_SINGLELINE | DT_END_ELLIPSIS : DT_WORDBREAK));
+    }
+    if (collapsed_) return;
 
     auto first = anchor_;
     auto last = caret_;
@@ -359,7 +418,8 @@ void PlayerCard::paint(HDC dc, int width, int height) const {
         RECT note{Pad, height - Pad - buttons_height() - 22, width - Pad, height - Pad - buttons_height() - 4};
         DrawTextW(dc, L"Copied to clipboard", -1, &note, DT_RIGHT | DT_SINGLELINE);
     }
-    button(dc, close_rect(height), L"Close", RGB(70, 70, 80), RGB(255, 255, 255));
+    if (state_.spectator.empty())
+        button(dc, close_rect(height), L"Close", RGB(70, 70, 80), RGB(255, 255, 255));
     if (state_.vehicle) return;
     button(dc, follow_rect(height), state_.followed ? L"Following" : L"Follow",
            state_.followed ? RGB(45, 70, 50) : RGB(40, 120, 60), RGB(255, 255, 255));
@@ -399,8 +459,9 @@ LRESULT PlayerCard::handle(UINT message, WPARAM wparam, LPARAM lparam) {
         ScreenToClient(window_, &at);
         const RECT cross = cross_rect();
         Caret ignored;
-        const bool text = !PtInRect(&cross, at) && caret_at(at, true, ignored);
-        SetCursor(LoadCursorW(nullptr, text || selecting_ ? IDC_IBEAM : IDC_ARROW));
+        const bool header = header_at(at);
+        const bool text = !header && !PtInRect(&cross, at) && caret_at(at, true, ignored);
+        SetCursor(LoadCursorW(nullptr, selecting_ || text ? IDC_IBEAM : header ? IDC_HAND : IDC_ARROW));
         return TRUE;
     }
     case WM_LBUTTONDBLCLK:
@@ -414,10 +475,21 @@ LRESULT PlayerCard::handle(UINT message, WPARAM wparam, LPARAM lparam) {
         const RECT mute = mute_rect(client.bottom);
         const RECT cross = cross_rect();
         Caret hit;
-        if (PtInRect(&follow, at) && follow_) follow_();
-        else if (PtInRect(&solo, at) && solo_ && state_.has_voice) solo_();
-        else if (PtInRect(&mute, at) && mute_ && state_.has_voice) mute_();
-        else if ((PtInRect(&close, at) || PtInRect(&cross, at)) && close_) close_();
+        if (header_at(at)) {
+            if (message == WM_LBUTTONDBLCLK) return 0;
+            collapsed_ = !collapsed_;
+            selecting_ = false;
+            if (GetCapture() == window_) ReleaseCapture();
+            anchor_ = caret_ = {};
+            copied_ = false;
+            update(state_);
+            InvalidateRect(window_, nullptr, FALSE);
+        }
+        else if (state_.vehicle && state_.spectator.empty() && PtInRect(&cross, at) && close_) close_();
+        else if (!collapsed_ && PtInRect(&follow, at) && follow_) follow_();
+        else if (!collapsed_ && PtInRect(&solo, at) && solo_ && state_.has_voice) solo_();
+        else if (!collapsed_ && PtInRect(&mute, at) && mute_ && state_.has_voice) mute_();
+        else if (!collapsed_ && state_.spectator.empty() && PtInRect(&close, at) && close_) close_();
         else if (caret_at(at, true, hit)) {
             copied_ = false;
             if (message == WM_LBUTTONDBLCLK) {

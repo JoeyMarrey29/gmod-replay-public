@@ -41,10 +41,12 @@ public:
     // Keeps the panel centred over the owner's client area and repaints when needed.
     void update();
     void scroll_by(int wheel_delta);
+    bool paint_frame(HDC dc, int width, int height);
 
 private:
     LRESULT handle(UINT message, WPARAM wparam, LPARAM lparam);
     void paint();
+    void draw(HDC dc, int width, int height);
     int content_height() const;
     int view_height() const;
     int max_scroll() const;
