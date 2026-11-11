@@ -221,7 +221,7 @@ template<class A> void fields(A& a, DemoProp::Animation& v) { a(v.time,v.sequenc
 template<class A> void fields(A& a, DemoProp& v) {
     a(v.entity, v.model, v.skin, v.body, v.vehicle, v.driver_attachment, v.brush,
       v.map_attached, v.map_rotation, v.map_created_id, v.seat, v.keys, v.hidden, v.owners, v.poses, v.colors, v.animations, v.back_gun, v.back_weapon,
-      v.vehicle_id, v.registration, v.plate_skin, v.vehicle_owner);
+      v.vehicle_id, v.registration, v.plate_skin, v.owner);
 }
 template<class A> void fields(A& a, DemoDoor& v) { a(v.entity, v.has_origin, v.origin, v.keys, v.yaws, v.hidden); }
 template<class A> void fields(A& a, DemoEffect& v) {

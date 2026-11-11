@@ -8,6 +8,7 @@
 #include "audio/SoundCatalog.h"
 #include "audio/StoppedSoundEvents.h"
 #include "ui/ScopeProjection.h"
+#include "ui/PickingRay.h"
 #include "app/VehicleCamera.h"
 
 #include <algorithm>
@@ -27,6 +28,117 @@ void near(float actual, float expected) {
 
 int main(int argc, char** argv) try {
     using namespace gmod::demo;
+    {
+        DemoData demo;
+        demo.tick_rate = 25;
+        demo.models = {"models/weapons/w_test.mdl"};
+        demo.players.resize(2);
+        demo.players[0].entity = 24;
+        demo.players[0].samples = {{9.9f, 10, 20, 0}, {10.1f, 10, 20, 0}};
+        demo.players[1].entity = 63;
+        demo.players[1].samples = demo.players[0].samples;
+        demo.weapon_view_models["weapon_test"] = "Models\\Weapons\\C_Test.mdl";
+        PerpheadsRegistry registry;
+        registry.swep_world_models["models/weapons/c_test"] = "models/weapons/w_test";
+        DemoProp prop;
+        prop.model = 0;
+        PropKey spawn;
+        spawn.time = 10;
+        spawn.has_position = true;
+        spawn.x = 35; spawn.y = 20; spawn.z = 40;
+        prop.keys.push_back(spawn);
+        auto& weapon = demo.weapons[weapon_handle(50, 1)];
+        weapon.class_name = {{1, "weapon_test"}};
+        weapon.owner = {{1, 24}};
+        require(prop_dropper_at(demo, registry, prop, 11) < 0,
+            "Nearby armed player incorrectly owns an item without a drop.");
+        weapon.gone = 10;
+        require(prop_dropper_at(demo, registry, prop, 11) == 0,
+            "Matched inventory removal and world item did not identify its dropper.");
+        require(prop_dropper_at(demo, registry, prop, 9.9f) < 0, "Drop attribution leaked before item spawn.");
+        weapon.gone = -1;
+        weapon.owner.push_back({10, -1});
+        require(prop_dropper_at(demo, registry, prop, 11) == 0,
+            "Weapon owner release did not identify the dropper.");
+        weapon.owner.back().value = 63;
+        require(prop_dropper_at(demo, registry, prop, 11) < 0,
+            "Direct inventory transfer was mistaken for a world drop.");
+        weapon.owner.back().value = -1;
+        weapon.owner.back().time = 9;
+        require(prop_dropper_at(demo, registry, prop, 11) < 0,
+            "Earlier unrelated drop attributed a later item.");
+        weapon.owner.back().time = 10.1f;
+        require(prop_dropper_at(demo, registry, prop, 10) < 0, "Future inventory event leaked through rewind.");
+        weapon.owner.back().time = 10;
+        prop.keys[0].x = 1000;
+        require(prop_dropper_at(demo, registry, prop, 11) < 0, "Distant weapon loss attributed a world item.");
+        prop.keys[0].x = 35;
+        demo.players[0].samples = {{5, 10, 20, 0}};
+        require(prop_dropper_at(demo, registry, prop, 11) < 0, "Out-of-view player was attributed a drop.");
+        demo.players[0].samples = demo.players[1].samples;
+        const auto competing = weapon;
+        demo.weapons.emplace(weapon_handle(51, 2), competing);
+        demo.weapons.at(weapon_handle(51, 2)).owner.front().value = 63;
+        require(prop_dropper_at(demo, registry, prop, 11) < 0, "Ambiguous simultaneous droppers chose an arbitrary owner.");
+        demo.weapons.erase(weapon_handle(51, 2));
+        registry.swep_world_models["models/weapons/c_test"] = "models/weapons/w_other";
+        require(prop_dropper_at(demo, registry, prop, 11) < 0, "Wrong weapon model matched a dropped prop.");
+        registry.swep_world_models["models/weapons/c_test"] = "models/weapons/w_test";
+        prop.vehicle = true;
+        require(prop_dropper_at(demo, registry, prop, 11) < 0, "Vehicle received inferred weapon ownership.");
+        prop.vehicle = false;
+        prop.keys.front().time = 0;
+        require(prop_dropper_at(demo, registry, prop, 11) < 0, "Initial world state was treated as a witnessed drop.");
+        std::cout << "PASS: dropper attribution, deletion/release, model/time/distance matches, rewind and ambiguous/out-of-view rejection\n";
+    }
+    {
+        const auto projection = DirectX::XMMatrixPerspectiveFovLH(1.0f, 16.0f / 9.0f, 1, 10000);
+        const auto view = DirectX::XMMatrixLookAtLH(DirectX::XMVectorSet(20, 30, 40, 1),
+            DirectX::XMVectorSet(20, 30, 41, 1), DirectX::XMVectorSet(0, 1, 0, 0));
+        DirectX::XMFLOAT4X4 matrix;
+        DirectX::XMStoreFloat4x4(&matrix, view * projection);
+        const auto ray = gmod::ui::picking_ray(&matrix.m[0][0], 640, 360, 1280, 720);
+        require(ray.has_value(), "Centre click did not produce a picking ray.");
+        near(ray->origin[0], -20);
+        near(ray->origin[1], -41);
+        near(ray->origin[2], 30);
+        near(ray->direction[0], 0);
+        near(ray->direction[1], -1);
+        near(ray->direction[2], 0);
+        gmod::source::bsp::Triangle triangle;
+        triangle.a = {-21, -100, 29};
+        triangle.b = {-19, -100, 29};
+        triangle.c = {-20, -100, 31};
+        gmod::source::WorldTrace mesh({triangle}, true);
+        gmod::source::WorldTrace::Hit hit;
+        require(mesh.trace(ray->origin.data(), ray->direction.data(), 6000, hit),
+            "Picking ray missed a small dropped-item mesh.");
+        near(hit.distance, 59);
+        const auto miss = gmod::ui::picking_ray(&matrix.m[0][0], 700, 360, 1280, 720);
+        require(miss && !mesh.trace(miss->origin.data(), miss->direction.data(), 6000, hit),
+            "Click beside a small item selected its oversized bounds.");
+        require(!gmod::ui::picking_ray(&matrix.m[0][0], 0, 0, 0, 720),
+            "Empty viewport produced a picking ray.");
+        DirectX::XMFLOAT4X4 singular{};
+        require(!gmod::ui::picking_ray(&singular.m[0][0], 0, 0, 1280, 720),
+            "Singular view produced a picking ray.");
+        DemoProp prop;
+        prop.owner = {{2, 24}, {4, 97}, {6, -1}};
+        prop.owners = {{1, 63}};
+        require(timed_int_at(prop.owner, 1, -1) == -1, "Ownership leaked before recording.");
+        require(timed_int_at(prop.owner, 3, -1) == 24, "Prop owner was confused with its occupant.");
+        require(timed_int_at(prop.owner, 5, -1) == 97, "Ownership transfer was lost.");
+        require(timed_int_at(prop.owner, 6, -1) == -1, "Unset owner remained visible.");
+        require(timed_int_at(prop.owner, 3, -1) == 24, "Ownership rewind failed.");
+        require(prop_owner_at(prop, 1) == 63, "Recorded engine prop owner was ignored.");
+        require(prop_owner_at(prop, 3) == 24, "Networked ownership did not take priority over engine ownership.");
+        prop.owners.push_back({6, -1});
+        require(prop_owner_at(prop, 6) == -1, "Removed prop ownership remained visible.");
+        require(prop_owner_at(prop, 3) == 24, "Owner resolution did not rewind.");
+        prop.vehicle = true;
+        require(prop_owner_at(prop, 1) == -1, "Vehicle driver was reported as its owner.");
+        std::cout << "PASS: small-item mesh picking, Source-space rays, misses and ownership transfer/unset/rewind\n";
+    }
     {
         DemoProp vehicle;
         vehicle.vehicle_id = {{1, "b"}};
@@ -316,7 +428,54 @@ int main(int argc, char** argv) try {
     near(player_eye_height(263), 40.0f);
     near(player_eye_height(PlayerFlagSeated), 40.0f);
     near(player_eye_height(PlayerFlagSeated | 2), 40.0f);
-    if (argc == 4 && std::string_view(argv[1]) == "--back-weapons") {
+    if (argc == 5 && std::string_view(argv[1]) == "--prop-droppers") {
+        const std::atomic<bool> cancel{false};
+        const auto demo = load_demo(argv[2], argv[3], [](float, const std::string&) {}, cancel);
+        const auto registry = load_perpheads_registry(argv[4]);
+        int matches = 0;
+        for (const auto& prop : demo.props) {
+            if (prop.keys.empty()) continue;
+            const float time = prop.keys.front().time + 0.2f;
+            if (prop_owner_at(prop, time) > 0) continue;
+            const int player = prop_dropper_at(demo, registry, prop, time);
+            if (player < 0) continue;
+            std::cout << "DROPPER entity=" << prop.entity << " player=" << player
+                << " name=" << demo.players[static_cast<std::size_t>(player)].name
+                << " time=" << time << " model=" << demo.models.at(prop.model)
+                << " position=" << prop.keys.front().x << ',' << prop.keys.front().y << ',' << prop.keys.front().z << '\n';
+            ++matches;
+        }
+        require(matches > 0, "No witnessed dropped weapons were attributed in the real demo.");
+        std::cout << "PASS: real-demo reconstructed dropped weapon owners=" << matches << '\n';
+        return 0;
+    } else if (argc == 4 && std::string_view(argv[1]) == "--prop-owners") {
+        const std::atomic<bool> cancel{false};
+        const auto demo = load_demo(argv[2], argv[3], [](float, const std::string&) {}, cancel);
+        int props = 0, vehicles = 0;
+        for (const auto& prop : demo.props) {
+            if (prop.seat || prop.back_gun || prop.brush || prop.map_attached) continue;
+            for (const auto& position : prop.keys) {
+                const int owner = prop_owner_at(prop, position.time);
+                PropPose pose;
+                if (owner <= 0 || !sample_prop(prop, position.time, pose)) continue;
+                require(player_index_at(demo, owner, position.time) >= 0,
+                    "Recorded prop owner did not resolve to a player.");
+                if (prop.vehicle) ++vehicles;
+                else {
+                    if (props < 6)
+                        std::cout << "PROP_OWNER entity=" << prop.entity << " owner=" << owner
+                            << " time=" << position.time << " model=" << demo.models.at(prop.model)
+                            << " position=" << pose.x << ',' << pose.y << ',' << pose.z << '\n';
+                    ++props;
+                }
+                break;
+            }
+        }
+        require(props > 0 && vehicles > 0,
+            "Fixture must preserve visible placed-prop and vehicle owners.");
+        std::cout << "PASS: parsed visible owned props=" << props << " owned vehicles=" << vehicles << '\n';
+        return 0;
+    } else if (argc == 4 && std::string_view(argv[1]) == "--back-weapons") {
         const std::atomic<bool> cancel{false};
         const auto demo=load_demo(argv[2],argv[3],[](float,const std::string&){},cancel);
         const auto player=std::find_if(demo.players.begin(),demo.players.end(),[](const auto& p){return p.name=="sl_cx";});

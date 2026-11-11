@@ -688,6 +688,11 @@ private:
                 json.skip();
             }
         });
+        if (op == "remove") {
+            if (auto* prop = track_at(entity, time))
+                push_changed(prop->owner, TimedInt{time, -1});
+            return;
+        }
         unset = op == "unset";
         if (op != "set" && !unset) return;
         if (key_name == "registration" || key_name == "licenseplateskin" || key_name == "id") {
@@ -698,10 +703,10 @@ private:
             }
             return;
         }
-        // The player who owns a vehicle (an Entity NWVar holding their entity index).
+        // Ownership is distinct from a vehicle's occupant or a weapon's carrier.
         if (key_name == "owner") {
-            if (auto* prop = track_at(entity, time); prop && prop->vehicle)
-                push_changed(prop->vehicle_owner,
+            if (auto* prop = track_at(entity, time))
+                push_changed(prop->owner,
                              TimedInt{time, unset || !has_number || number <= 0 ? -1 : static_cast<int>(number)});
             return;
         }
@@ -1459,7 +1464,7 @@ private:
                         }
                     }
                     if (object.has_position || kind == 1) prop.keys.push_back(key);
-                    if (object.owner >= 0) push_owner(prop, time, object.owner);
+                    if (object.owner >= 0 || !prop.vehicle) push_owner(prop, time, object.owner);
                     prop_track_[object.entity] = parked;
                     dead_tracks_.erase(object.entity);
                     bind_entity_track(object.entity, time, parked);
@@ -1712,7 +1717,7 @@ private:
             });
         for (auto& prop : data_.props) {
             std::stable_sort(prop.back_weapon.begin(),prop.back_weapon.end(),[](const auto& a,const auto& b){return a.time<b.time;});
-            std::stable_sort(prop.vehicle_owner.begin(),prop.vehicle_owner.end(),[](const auto& a,const auto& b){return a.time<b.time;});
+            std::stable_sort(prop.owner.begin(),prop.owner.end(),[](const auto& a,const auto& b){return a.time<b.time;});
             std::stable_sort(prop.animations.begin(),prop.animations.end(),[](const auto& a,const auto& b) { return a.time<b.time; });
             std::stable_sort(prop.keys.begin(), prop.keys.end(),
                 [](const PropKey& a, const PropKey& b) { return a.time < b.time; });
@@ -2009,7 +2014,7 @@ void rescale_times(DemoData& data, float scale) {
         for (auto& key : prop.colors) key.time *= scale;
         for (auto& key : prop.animations) key.time *= scale;
         for (auto& key : prop.back_weapon) key.time *= scale;
-        for (auto& key : prop.vehicle_owner) key.time *= scale;
+        for (auto& key : prop.owner) key.time *= scale;
         for (auto& key : prop.hidden) key.time *= scale;
         for (auto* keys : {&prop.vehicle_id, &prop.registration, &prop.plate_skin})
             for (auto& key : *keys) key.time *= scale;
@@ -2560,6 +2565,69 @@ const EmoteKey* emote_at(const DemoPlayer& player, float time) {
 int timed_int_at(const std::vector<TimedInt>& keys, float time, int fallback) {
     const auto* key = key_at(keys, time);
     return key ? key->value : fallback;
+}
+
+int prop_owner_at(const DemoProp& prop, float time) {
+    const int owner = timed_int_at(prop.owner, time, -1);
+    if (owner > 0 || prop.vehicle || prop.seat) return owner;
+    const auto* engine_owner = occupant_at(prop, time);
+    return engine_owner ? engine_owner->owner : -1;
+}
+
+int prop_dropper_at(const DemoData& demo, const PerpheadsRegistry& registry,
+                    const DemoProp& prop, float time) {
+    if (prop.vehicle || prop.seat || prop.back_gun || prop.brush || prop.map_attached
+        || prop.model < 0 || static_cast<std::size_t>(prop.model) >= demo.models.size()
+        || prop.keys.empty()) return -1;
+    const auto& spawn = prop.keys.front();
+    if (!spawn.present || !spawn.has_position || spawn.parent >= 0
+        || spawn.time <= 1.0f || time < spawn.time) return -1;
+    const auto normalize = [](std::string path) {
+        std::replace(path.begin(), path.end(), '\\', '/');
+        std::transform(path.begin(), path.end(), path.begin(),
+            [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (path.ends_with(".mdl")) path.resize(path.size() - 4);
+        return path;
+    };
+    const auto model = normalize(demo.models[static_cast<std::size_t>(prop.model)]);
+    const float window = std::max(0.12f, 3.0f / std::max(demo.tick_rate, 1.0f));
+    int result = -1;
+    for (const auto& [handle, weapon] : demo.weapons) {
+        const auto match = [&](float dropped, int entity) {
+            if (entity <= 0 || dropped > time || std::fabs(dropped - spawn.time) > window) return true;
+            const auto& cls = timed_text_at(weapon.class_name, dropped);
+            const auto view = demo.weapon_view_models.find(cls);
+            if (view == demo.weapon_view_models.end()) return true;
+            const auto world = registry.swep_world_models.find(normalize(view->second));
+            if (world == registry.swep_world_models.end() || normalize(world->second) != model) return true;
+            const int player = player_index_at(demo, entity, dropped);
+            if (player < 0 || demo.players[static_cast<std::size_t>(player)].npc) return true;
+            const auto& data = demo.players[static_cast<std::size_t>(player)];
+            const auto next = std::lower_bound(data.samples.begin(), data.samples.end(), dropped,
+                [](const PlayerSample& key, float value) { return key.time < value; });
+            const bool observed = (next != data.samples.end() && std::fabs(next->time - dropped) <= window)
+                || (next != data.samples.begin() && std::fabs(std::prev(next)->time - dropped) <= window);
+            PlayerPose pose;
+            if (!observed || !sample_player(data, dropped, pose)) return true;
+            const float dx = spawn.x - pose.x, dy = spawn.y - pose.y, dz = spawn.z - (pose.z + 32);
+            if (dx * dx + dy * dy + dz * dz > 100.0f * 100.0f) return true;
+            if (result >= 0 && result != player) return false;
+            result = player;
+            return true;
+        };
+        int previous = -1;
+        for (const auto& key : weapon.owner) {
+            if (key.value <= 0 && previous > 0 && !match(key.time, previous)) return -1;
+            previous = key.value;
+        }
+        if (weapon.gone >= 0) {
+            const auto before = std::lower_bound(weapon.owner.begin(), weapon.owner.end(), weapon.gone,
+                [](const TimedInt& key, float value) { return key.time < value; });
+            if (before != weapon.owner.begin()
+                && !match(weapon.gone, std::prev(before)->value)) return -1;
+        }
+    }
+    return result;
 }
 
 const std::string& timed_text_at(const std::vector<TimedText>& keys, float time) {

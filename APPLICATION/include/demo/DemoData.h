@@ -170,7 +170,7 @@ struct ColorKey {
 
 struct OwnerKey {
     float time = 0.0f;
-    int owner = -1;  // entity index of the occupant, -1 when empty
+    int owner = -1;  // vehicle occupant, or a prop's engine owner; -1 when empty
 };
 
 // A player-placed physics prop, a scripted prop (furniture, items, lamps...), a vehicle, or an
@@ -199,7 +199,7 @@ struct DemoProp {
     std::vector<TimedText> vehicle_id;
     std::vector<TimedText> registration;
     std::vector<TimedText> plate_skin;
-    std::vector<TimedInt> vehicle_owner; // vehicles: entity index of the owning player, -1 when unknown
+    std::vector<TimedInt> owner; // owner NWVar: owning player's entity index, -1 when unknown
 };
 
 struct DoorKey {
@@ -539,6 +539,7 @@ const ViewModelKey* view_model_at(const DemoData& demo, float time);
 HeldWeapon held_weapon_at(const DemoData& demo, const DemoPlayer& player, float time);
 // Latest value at or before `time`; `fallback` when the timeline has not started.
 int timed_int_at(const std::vector<TimedInt>& keys, float time, int fallback);
+int prop_owner_at(const DemoProp& prop, float time);
 // The act the server last started on the player and not yet stopped; null when none.
 const EmoteKey* emote_at(const DemoPlayer& player, float time);
 const std::string& timed_text_at(const std::vector<TimedText>& keys, float time);

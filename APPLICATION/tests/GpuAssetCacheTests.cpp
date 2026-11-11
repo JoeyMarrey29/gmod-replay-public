@@ -61,6 +61,10 @@ void test_disk_cache(const std::filesystem::path& root) {
     prop.vehicle_id = {{1, "b"}};
     prop.registration = {{2, "PD-1234"}, {4, "AB12"}};
     prop.plate_skin = {{3, "default_blue"}};
+    prop.owner = {{1, 24}, {3, 97}};
+    auto& dropped = original.props.emplace_back();
+    dropped.owner = {{2, 63}, {4, -1}};
+    dropped.owners = {{1, 24}, {6, -1}};
     original.doors.emplace_back().yaws.push_back({1, 90, 0, 0});
     original.effects.emplace_back().name = "blood";
     original.clothing.emplace_back().skin = "1";
@@ -102,6 +106,11 @@ void test_disk_cache(const std::filesystem::path& root) {
         && restored->props[0].vehicle_id[0].text == "b"
         && restored->props[0].registration[1].text == "AB12"
         && restored->props[0].plate_skin[0].text == "default_blue"
+        && restored->props[0].owner[0].value == 24 && restored->props[0].owner[1].time == 3
+        && restored->props[0].owner[1].value == 97
+        && !restored->props[1].vehicle && restored->props[1].owner[0].value == 63
+        && restored->props[1].owner[1].time == 4 && restored->props[1].owner[1].value == -1
+        && restored->props[1].owners[0].owner == 24 && restored->props[1].owners[1].owner == -1
         && restored->recorded_map_entities == original.recorded_map_entities
         && restored->doors[0].yaws[0].yaw == 90 && restored->effects[0].name == "blood"
         && restored->clothing[0].skin == "1" && restored->clothing_records.at(1).items[0].skin == 2

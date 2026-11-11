@@ -5,6 +5,40 @@ namespace GmodDemo.Parser.Tests;
 public sealed class DataTableTests
 {
     [Fact]
+    public void Physics_prop_owner_changes_include_transfer_and_unset()
+    {
+        var tables = new DataTableSet();
+        var cls = new ServerClass { ClassId = 0, Name = "CPhysicsProp", DataTableName = "DT_Test" };
+        cls.Flattened.Add(new(0, "DT_BaseEntity", "m_hOwnerEntity",
+            new(SendPropType.Int, "m_hOwnerEntity", SendPropFlags.Unsigned, null, null, 0, 0, 0, 23), null));
+        tables.Classes.Add(cls);
+        tables.ClassesById[0] = cls;
+        var world = new EntityWorld();
+        world.AttachTables(tables);
+        world.ForceMode(PropIndexMode.Source2013);
+        static byte[] Packet(bool spawn, int owner)
+        {
+            var body = new List<(int, int)> { (4, 6), (0, 1), (spawn ? 1 : 0, 1) };
+            if (spawn) body.AddRange([(0, 1), (7, 10)]);
+            body.AddRange([(1, 1), (0, 6), (owner, 23), (0, 1), (0, 1)]);
+            var fields = new List<(int, int)>
+            {
+                ((int)NetMessageType.SvcPacketEntities, 6), (32, 13), (1, 1), (1, 32),
+                (0, 1), (1, 13), (body.Sum(v => v.Item2), 24), (0, 1),
+            };
+            fields.AddRange(body);
+            return PackBits(fields.ToArray());
+        }
+        world.ApplyPacket(1, Packet(true, 24 | (3 << 13)), null);
+        Assert.Equal(24, world.Snapshot(1)?.OwnerEntity);
+        var transfer = world.ApplyPacket(2, Packet(false, 63 | (4 << 13)), null);
+        Assert.Contains(transfer, change => change is EntityOwnerChange { Entity: 1, Owner: 63 });
+        var unset = world.ApplyPacket(3, Packet(false, EntityIdentity.InvalidHandle), null);
+        Assert.Contains(unset, change => change is EntityOwnerChange { Entity: 1, Owner: null });
+        Assert.Equal(0, world.Stats.PacketsFailed);
+    }
+
+    [Fact]
     public void Vehicle_entry_restores_class_skin_and_body_then_applies_selected_baseline_and_deltas()
     {
         var tables = new DataTableSet();

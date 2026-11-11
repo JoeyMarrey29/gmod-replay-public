@@ -11,10 +11,10 @@ namespace gmod::ui {
 
 struct PlayerCardState {
     bool visible = false;
-    std::wstring title;  // character name, or the vehicle's name
+    std::wstring title;  // character name, or the prop/vehicle's name
     COLORREF title_color = RGB(0, 255, 0);
     std::vector<std::pair<std::wstring, std::wstring>> rows;  // label, value
-    bool vehicle = false;   // a vehicle's card: only the Close button applies
+    bool vehicle = false;   // a prop/vehicle card: only the Close button applies
     bool followed = false;  // the card's player is already being followed
     bool has_voice = false;  // the demo holds voice clips for this player
     bool solo = false;       // only this player's voice is being heard
@@ -22,9 +22,9 @@ struct PlayerCardState {
     std::wstring spectator;  // Steam name - character name when automatically following
 };
 
-// The box that opens when a player or vehicle is clicked: everything the demo knows about them,
+// The box that opens when a player, prop or vehicle is clicked: everything the demo knows about them,
 // with buttons to follow them or close the box. Spectator cards dock top-left;
-// clicked player/vehicle cards dock top-right.
+// clicked player/prop/vehicle cards dock top-right.
 // The title and values can be highlighted by dragging; the highlight is copied to the clipboard.
 class PlayerCard {
 public:

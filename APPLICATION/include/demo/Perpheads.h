@@ -143,6 +143,10 @@ struct PerpheadsRegistry {
 
 // Reads clothing_types.json and perpheads_jobs.json from `directory`.
 PerpheadsRegistry load_perpheads_registry(const std::filesystem::path& directory);
+// Player index inferred from a matching weapon leaving inventory as this world item appears.
+// Returns -1 for missing, ambiguous or out-of-view drops; never guesses from proximity alone.
+int prop_dropper_at(const DemoData& demo, const PerpheadsRegistry& registry,
+                    const DemoProp& prop, float time);
 std::string weapon_sound_override_at(const PerpheadsRegistry& registry, const DemoData& demo,
                                      int handle, float time);
 int weapon_attachment_sequence_at(const PerpheadsRegistry& registry, const DemoData& demo,

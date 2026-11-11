@@ -38,6 +38,7 @@
 #include "ui/RadioHud.h"
 #include "ui/DialogHud.h"
 #include "ui/PlayerCard.h"
+#include "ui/PickingRay.h"
 #include "ui/TimelineBar.h"
 #include "source/bsp/BspReader.h"
 #include "source/bsp/StaticPropsReader.h"
@@ -4885,7 +4886,7 @@ public:
             },
             [this] {
                 card_player_ = -1;
-                card_vehicle_ = -1;
+                card_prop_ = -1;
             });
         spectator_card_ = std::make_unique<gmod::ui::PlayerCard>(
             window, [] {},
@@ -4956,7 +4957,7 @@ public:
     void open_card(int player) {
         if (player >= 0 && static_cast<std::size_t>(player) < demo_.players.size()) {
             card_player_ = player;
-            card_vehicle_ = -1;
+            card_prop_ = -1;
         }
     }
     // Simulates a click at a client point on the next frame and records what it selected
@@ -6904,33 +6905,63 @@ private:
             g_deselect_pending = false;
             g_click_pending = false;
             g_follow_click_pending = false;
-            if (card_player_ >= 0 || card_vehicle_ >= 0) {
+            if (card_player_ >= 0 || card_prop_ >= 0) {
                 card_player_ = -1;
-                card_vehicle_ = -1;
+                card_prop_ = -1;
                 last_card_refresh_ = 0;
             }
         }
         if (g_click_pending && !click_test_) {
             g_click_pending = false;
             const int hit = pick_view_player(renderer, g_click_at.x, g_click_at.y);
-            apply_player_click(hit, hit < 0 ? pick_view_vehicle(renderer, g_click_at.x, g_click_at.y) : -1);
+            apply_player_click(hit, hit < 0 ? pick_view_prop(renderer, g_click_at.x, g_click_at.y) : -1);
         }
     }
 
-    // The nearest drawn vehicle under the client point (index into demo_.props), -1 for none.
-    int pick_vehicle(const Matrix4& view_projection, int x, int y, int width, int height) const {
-        if (hide_vehicles_ || width <= 0 || height <= 0) return -1;
+    // The nearest placed prop or vehicle under the client point (index into demo_.props).
+    int pick_prop(const Matrix4& view_projection, int x, int y, int width, int height) const {
+        if (width <= 0 || height <= 0) return -1;
         constexpr float Radius = 95.0f;
         constexpr float Height = 80.0f;
         constexpr float Range = 6000.0f;
         int best = -1;
         float best_depth = FLT_MAX;
+        const auto ray = gmod::ui::picking_ray(view_projection.values, x, y, width, height);
         for (std::size_t index = 0; index < demo_.props.size(); ++index) {
             const auto& prop = demo_.props[index];
-            if (!prop.vehicle || prop.seat || prop.model < 0) continue;
+            if (prop.seat || prop.back_gun || prop.brush || prop.map_attached || prop.model < 0
+                || (prop.vehicle && hide_vehicles_)) continue;
             if (gmod::demo::timed_int_at(prop.hidden, time_, 0) != 0) continue;
             gmod::demo::PropPose pose;
             if (!gmod::demo::sample_prop(prop, time_, pose)) continue;
+            if (!prop.vehicle) {
+                if (!ray || !audio_assets_ || static_cast<std::size_t>(prop.model) >= demo_.models.size()) continue;
+                const auto mesh = audio_assets_->model_traces.find(demo_.models[static_cast<std::size_t>(prop.model)]);
+                if (mesh == audio_assets_->model_traces.end()) continue;
+                const float origin[]{pose.x, pose.y, pose.z}, angles[]{pose.pitch, pose.yaw, pose.roll};
+                const auto matrix = gmod::source::model::matrix_from_source_angles(origin, angles);
+                const auto inverse = rigid_inverse(matrix.data());
+                std::array<float, 3> local_origin{}, local_direction{};
+                for (int row = 0; row < 3; ++row) {
+                    local_origin[row] = inverse[row * 4 + 3];
+                    for (int axis = 0; axis < 3; ++axis) {
+                        local_origin[row] += inverse[row * 4 + axis] * ray->origin[axis];
+                        local_direction[row] += inverse[row * 4 + axis] * ray->direction[axis];
+                    }
+                }
+                gmod::source::WorldTrace::Hit contact;
+                if (!mesh->second->trace(local_origin.data(), local_direction.data(), Range, contact)) continue;
+                const auto& start = ray->origin;
+                const auto& direction = ray->direction;
+                float sx, sy, depth;
+                if (project(view_projection, start[0] + direction[0] * contact.distance,
+                            start[1] + direction[1] * contact.distance, start[2] + direction[2] * contact.distance,
+                            width, height, sx, sy, depth) && depth < best_depth) {
+                    best = static_cast<int>(index);
+                    best_depth = depth;
+                }
+                continue;
+            }
             // A cylinder around the vehicle, projected to its screen bounds.
             float left = FLT_MAX, right = -FLT_MAX, top = FLT_MAX, bottom = -FLT_MAX, nearest = FLT_MAX;
             bool behind = false;
@@ -6959,7 +6990,7 @@ private:
         return best;
     }
 
-    int pick_view_vehicle(const Dx12Foundation& renderer, int x, int y, int width = 0, int height = 0) const {
+    int pick_view_prop(const Dx12Foundation& renderer, int x, int y, int width = 0, int height = 0) const {
         if (width <= 0 || height <= 0) {
             RECT client{};
             GetClientRect(window_, &client);
@@ -6967,15 +6998,15 @@ private:
             height = client.bottom;
         }
         if (const auto uv = renderer.scope_overlay().texture(static_cast<float>(x), static_cast<float>(y), width, height))
-            return pick_vehicle(renderer.scope_view_projection(),
+            return pick_prop(renderer.scope_view_projection(),
                 static_cast<int>((*uv)[0]*width), static_cast<int>((*uv)[1]*height), width, height);
-        return pick_vehicle(renderer.view_projection(), x, y, width, height);
+        return pick_prop(renderer.view_projection(), x, y, width, height);
     }
 
-    void apply_player_click(int hit, int vehicle) {
+    void apply_player_click(int hit, int prop) {
         const bool follow_click = std::exchange(g_follow_click_pending, false);
         card_player_ = hit;
-        card_vehicle_ = hit < 0 ? vehicle : -1;
+        card_prop_ = hit < 0 ? prop : -1;
         last_card_refresh_ = 0;
         if (hit >= 0 && follow_click) follow(hit);
     }
@@ -6986,13 +7017,13 @@ public:
         if (!click_test_ || !g_click_pending) return false;
         g_click_pending = false;
         const int hit = pick_view_player(renderer, g_click_at.x, g_click_at.y, width, height);
-        const int vehicle = hit < 0 ? pick_view_vehicle(renderer, g_click_at.x, g_click_at.y, width, height) : -1;
-        apply_player_click(hit, vehicle);
+        const int prop = hit < 0 ? pick_view_prop(renderer, g_click_at.x, g_click_at.y, width, height) : -1;
+        apply_player_click(hit, prop);
         std::ofstream log("build\\click_test.log", std::ios::app);
         log << "click " << g_click_at.x << "," << g_click_at.y << " -> " << hit;
-        if (vehicle >= 0) log << " vehicle=" << vehicle;
+        if (prop >= 0) log << (demo_.props[static_cast<std::size_t>(prop)].vehicle ? " vehicle=" : " prop=") << prop;
         log << " followed=" << follow_ << " free_view=" << free_view_;
-        if (hit >= 0 || vehicle >= 0) {
+        if (hit >= 0 || prop >= 0) {
             const auto card = build_card_state();
             log << " | " << std::string(card.title.begin(), card.title.end());
             for (const auto& [label, value] : card.rows) {
@@ -7029,46 +7060,54 @@ private:
         return to_wide(character + " (" + steam + ")");
     }
 
-    // What the demo knows about the vehicle in the info card, most importantly who owns it.
-    gmod::ui::PlayerCardState build_vehicle_card_state() const {
+    gmod::ui::PlayerCardState build_prop_card_state() const {
         gmod::ui::PlayerCardState state;
-        if (card_vehicle_ < 0 || static_cast<std::size_t>(card_vehicle_) >= demo_.props.size()) return state;
-        const auto& vehicle = demo_.props[static_cast<std::size_t>(card_vehicle_)];
+        if (card_prop_ < 0 || static_cast<std::size_t>(card_prop_) >= demo_.props.size()) return state;
+        const auto& prop = demo_.props[static_cast<std::size_t>(card_prop_)];
         state.visible = true;
         state.vehicle = true;
         state.title_color = RGB(255, 210, 90);
-        std::string model = vehicle.model >= 0 && static_cast<std::size_t>(vehicle.model) < demo_.models.size()
-            ? demo_.models[static_cast<std::size_t>(vehicle.model)] : std::string();
+        std::string model = prop.model >= 0 && static_cast<std::size_t>(prop.model) < demo_.models.size()
+            ? demo_.models[static_cast<std::size_t>(prop.model)] : std::string();
         std::replace(model.begin(), model.end(), '\\', '/');
         const auto slash = model.find_last_of('/');
         std::string name = slash == std::string::npos ? model : model.substr(slash + 1);
         if (name.size() > 4 && name.ends_with(".mdl")) name.resize(name.size() - 4);
-        state.title = name.empty() ? L"Vehicle" : L"Vehicle - " + to_wide(name);
+        const std::wstring kind = prop.vehicle ? L"Vehicle" : L"Prop";
+        state.title = name.empty() ? kind : kind + L" - " + to_wide(name);
         const auto add = [&](const wchar_t* label, std::wstring value) {
             state.rows.emplace_back(label, std::move(value));
         };
-        const int owner_entity = gmod::demo::timed_int_at(vehicle.vehicle_owner, time_, -1);
-        const int owner = player_for_entity(owner_entity);
+        const int owner_entity = gmod::demo::prop_owner_at(prop, time_);
+        int owner = player_for_entity(owner_entity);
+        bool dropped = false;
+        if (owner_entity <= 0 && outfit_) {
+            owner = gmod::demo::prop_dropper_at(demo_, outfit_->registry, prop, time_);
+            dropped = owner >= 0;
+        }
         std::wstring owner_text = owner >= 0 ? describe_player(owner)
             : owner_entity > 0 ? L"Unknown player (entity #" + std::to_wstring(owner_entity) + L")"
             : L"Not recorded";
         add(L"Owner", owner_text);
+        if (dropped) add(L"Source", L"Matched weapon drop (inferred)");
         if (owner >= 0) {
             const auto& player = demo_.players[static_cast<std::size_t>(owner)];
             std::string ids = player.steam_id.empty() ? std::string("unknown") : player.steam_id;
             if (!player.steam_id64.empty()) ids += "  (" + player.steam_id64 + ")";
             add(L"Owner SteamID", to_wide(ids));
         }
-        const auto plate = gmod::demo::timed_text_at(vehicle.registration, time_);
-        add(L"Registration", plate.empty() ? L"None" : to_wide(plate));
-        int driver = -1;
-        if (!vehicle.owners.empty()) {
-            const auto after = std::upper_bound(vehicle.owners.begin(), vehicle.owners.end(), time_,
-                [](float time, const auto& key) { return time < key.time; });
-            if (after != vehicle.owners.begin()) driver = player_for_entity(std::prev(after)->owner);
+        if (prop.vehicle) {
+            const auto plate = gmod::demo::timed_text_at(prop.registration, time_);
+            add(L"Registration", plate.empty() ? L"None" : to_wide(plate));
+            int driver = -1;
+            if (!prop.owners.empty()) {
+                const auto after = std::upper_bound(prop.owners.begin(), prop.owners.end(), time_,
+                    [](float time, const auto& key) { return time < key.time; });
+                if (after != prop.owners.begin()) driver = player_for_entity(std::prev(after)->owner);
+            }
+            add(L"Driver", driver >= 0 ? describe_player(driver) : L"Nobody");
         }
-        add(L"Driver", driver >= 0 ? describe_player(driver) : L"Nobody");
-        add(L"Entity", L"#" + std::to_wstring(vehicle.entity));
+        add(L"Entity", L"#" + std::to_wstring(prop.entity));
         return state;
     }
 
@@ -7076,7 +7115,7 @@ private:
     gmod::ui::PlayerCardState build_card_state(bool spectator = false) const {
         const bool spectating = spectator && !free_view_ && follow_ >= 0;
         if (spectator && !spectating) return {};
-        if (!spectating && card_vehicle_ >= 0) return build_vehicle_card_state();
+        if (!spectating && card_prop_ >= 0) return build_prop_card_state();
         gmod::ui::PlayerCardState state;
         const int card_player = spectating ? follow_ : card_player_;
         if (!spectator && !free_view_ && card_player == follow_) return state;
@@ -9130,7 +9169,7 @@ private:
     bool preview_ran_ = false;
     std::wstring preview_command_;
     int card_player_ = -1;  // player shown in the info card, -1 = closed
-    int card_vehicle_ = -1; // vehicle (index into demo_.props) shown in the info card instead
+    int card_prop_ = -1; // prop or vehicle (index into demo_.props) shown in the info card instead
     int real_start_ = -1;   // local time of day (seconds) the recording began, -1 = unknown
     std::map<int, std::array<float,12>> rendered_plate_poses_;
     std::set<int> rendered_badge_parts_;

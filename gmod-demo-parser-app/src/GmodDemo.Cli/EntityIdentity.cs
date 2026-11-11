@@ -47,10 +47,11 @@ public static class EntityIdentity
         || className.Equals("CLuaNextBot", StringComparison.Ordinal);
 
     /// <summary>
-    /// Weapons, scripted entities, and driveable vehicles carry an owner handle worth attributing.
+    /// Weapons, physics props, scripted entities, and driveable vehicles carry an owner handle worth attributing.
     /// </summary>
     public static bool TracksOwner(string className) =>
-        IsWeaponClass(className) || IsVehicleClass(className) || IsScriptedClass(className);
+        className == "CPhysicsProp"
+        || IsWeaponClass(className) || IsVehicleClass(className) || IsScriptedClass(className);
 
     public static string? DoorStateName(int? state) => state switch
     {
