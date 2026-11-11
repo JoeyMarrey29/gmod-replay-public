@@ -94,6 +94,7 @@ add_executable(gmod-replay-application WIN32
     src/source/bsp/BspReader.cpp
     src/source/bsp/StaticPropsReader.cpp
     src/source/AssetResolver.cpp
+    src/source/CustomWeaponMaterials.cpp
     src/source/Ground.cpp
     src/source/WorldTrace.cpp
     src/source/model/VvdReader.cpp
@@ -286,3 +287,15 @@ add_executable(gmod-replay-vtf-tests EXCLUDE_FROM_ALL
 target_compile_features(gmod-replay-vtf-tests PRIVATE cxx_std_20)
 target_compile_definitions(gmod-replay-vtf-tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_include_directories(gmod-replay-vtf-tests PRIVATE include third_party/lzma)
+
+add_executable(gmod-replay-custom-weapon-tests EXCLUDE_FROM_ALL
+    tests/CustomWeaponMaterialsTests.cpp
+    src/source/CustomWeaponMaterials.cpp
+    src/source/vmt/VmtReader.cpp
+    src/source/vtf/VtfReader.cpp
+    src/source/Vfs.cpp
+    third_party/lzma/LzmaDec.c
+)
+target_compile_features(gmod-replay-custom-weapon-tests PRIVATE cxx_std_20)
+target_compile_definitions(gmod-replay-custom-weapon-tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_include_directories(gmod-replay-custom-weapon-tests PRIVATE include third_party/lzma)

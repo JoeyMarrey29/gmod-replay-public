@@ -11,7 +11,7 @@ $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $build = Join-Path $root $(if ($Edition -eq 'public') { 'build\vbuild-public' } else { 'build\vbuild' })
 & $CMake -S (Join-Path $root 'APPLICATION') -B $build -A x64 "-DGMOD_REPLAY_EDITION=$Edition"
 if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed. Initialize submodules first.' }
-& $CMake --build $build --config Release --target gmod-replay-application gmod-replay-viewing-policy-tests gmod-replay-combat-tests gmod-replay-vtf-tests gmod-replay-release-notes-tests gmod-replay-model-pose-tests gmod-replay-gpu-cache-tests gmod-replay-menu-settings-tests gmod-replay-audio-tests gmod-replay-npc-gui-tests gmod-replay-frame-text-tests gmod-replay-bank-baked-tests --parallel
+& $CMake --build $build --config Release --target gmod-replay-application gmod-replay-viewing-policy-tests gmod-replay-combat-tests gmod-replay-vtf-tests gmod-replay-custom-weapon-tests gmod-replay-release-notes-tests gmod-replay-model-pose-tests gmod-replay-gpu-cache-tests gmod-replay-menu-settings-tests gmod-replay-audio-tests gmod-replay-npc-gui-tests gmod-replay-frame-text-tests gmod-replay-bank-baked-tests --parallel
 if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
 & "$build\Release\gmod-replay-viewing-policy-tests.exe"
 if ($LASTEXITCODE -ne 0) { throw 'Viewing policy regression failed.' }
@@ -25,6 +25,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Baked bank lighting regression failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'In-frame ESP rendering regression failed.' }
 & "$build\Release\gmod-replay-vtf-tests.exe"
 if ($LASTEXITCODE -ne 0) { throw 'Native texture regression failed.' }
+& "$build\Release\gmod-replay-custom-weapon-tests.exe"
+if ($LASTEXITCODE -ne 0) { throw 'Recorder weapon material regression failed.' }
 & "$build\Release\gmod-replay-release-notes-tests.exe"
 if ($LASTEXITCODE -ne 0) { throw 'Release notes regression failed.' }
 & "$build\Release\gmod-replay-gpu-cache-tests.exe"

@@ -42,6 +42,7 @@
 #include "source/bsp/BspReader.h"
 #include "source/bsp/StaticPropsReader.h"
 #include "source/AssetResolver.h"
+#include "source/CustomWeaponMaterials.h"
 #include "source/GameContent.h"
 #include "source/Vfs.h"
 #include "source/Ground.h"
@@ -560,6 +561,7 @@ struct ActorBinding {
     std::string weapon;  // held weapons: the class name the player must be holding
     int attachment = -1;
     int attachment_sequence = 0;
+    gmod::source::WeaponMaterialVariant weapon_material_variant = gmod::source::WeaponMaterialVariant::Standard;
     // Players and clothing: skinned with this player's bone palette.
     int palette = -1;
     std::string model_path;
@@ -1338,7 +1340,7 @@ public:
             next_request_ = 0;
             stop_decoding_ = false;
             failed_world_materials_ = 0;
-            scope_lens_material_ = UINT_MAX;
+            scope_lens_materials_.clear();
             create_world_textures(scene.material_textures, scene.prop_data);
         }
         for (auto& batch : world_batches_) {
@@ -1471,7 +1473,7 @@ public:
                 }
                 const bool active_lens = !rendering_scope && scope_fov_ > 0
                     && prop_variants_[batch.variant].first_person
-                    && batch.texture_index == scope_lens_material_;
+                    && is_scope_lens(batch.texture_index);
                 command_list_->IASetVertexBuffers(0, 1,
                     batch.map_geometry ? &map_prop_vertex_view_ : &prop_vertex_view_);
                 command_list_->IASetIndexBuffer(batch.map_geometry ? &map_prop_index_view_ : &prop_index_view_);
@@ -1861,7 +1863,7 @@ public:
         const float fov = magnification > 0 ? (90.0f/(3.0f*magnification))*0.01745329251994329577f : 0;
         if (scope_fov_ != fov && fov > 0)
             std::cout << "SCOPE_LENS magnification=" << magnification << " fov_degrees="
-                << 90.0f/(3.0f*magnification) << " material_slot=" << scope_lens_material_ << "\n";
+                << 90.0f/(3.0f*magnification) << " material_count=" << scope_lens_materials_.size() << "\n";
         scope_fov_ = fov;
     }
     float field_of_view() const {
@@ -2274,9 +2276,11 @@ private:
         }
         prop_variants_ = prop_data.variants;
         world_materials_ = materials;
+        scope_lens_materials_.clear();
         for (std::size_t i = 0; i < materials.size(); ++i)
-            if (materials[i].material == "models/jarheads/weapons/attachments/rifle_sights/lens/rt")
-                scope_lens_material_ = material_slot(i);
+            if (gmod::source::CustomWeaponMaterials::original_name(materials[i].material)
+                == "models/jarheads/weapons/attachments/rifle_sights/lens/rt")
+                scope_lens_materials_.push_back(material_slot(i));
         world_textures_.resize(MaterialSlotCount * (materials.size() + 1));
         // Reserved slots: 0 neutral grey, 1 missing-texture magenta, 2 water.
         upload_texture(FallbackSlot, {1, 1, {200, 200, 200, 255}});
@@ -4057,7 +4061,7 @@ private:
             const auto material = std::find_if(materials.begin(), materials.end(),
                 [&](const auto& entry) { return entry.material == batch.material; });
             if (material == materials.end()
-                || material_slot(static_cast<std::size_t>(material-materials.begin())) != scope_lens_material_) continue;
+                || !is_scope_lens(material_slot(static_cast<std::size_t>(material-materials.begin())))) continue;
             for (UINT i = 0; i < variant.instance_count; ++i) {
                 const auto& instance = prop_data.instances[variant.first_instance+i];
                 if (!instance.dynamic) continue;
@@ -4725,7 +4729,11 @@ private:
     float scope_fov_ = 0;
     Matrix4 scope_view_projection_{};
     Matrix4 scope_sky_projection_{};
-    UINT scope_lens_material_ = UINT_MAX;
+    bool is_scope_lens(UINT slot) const {
+        return std::find(scope_lens_materials_.begin(), scope_lens_materials_.end(), slot)
+            != scope_lens_materials_.end();
+    }
+    std::vector<UINT> scope_lens_materials_;
     std::vector<char> outline_variants_;
     bool outline_active_ = false;
     bool outline_through_walls_ = false;
@@ -8652,7 +8660,9 @@ private:
                 const auto& gun=demo_.props.at(static_cast<std::size_t>(actor.index));
                 const int player_index=gmod::demo::back_gun_player_at(demo_,gun,time_,hide_followed?follow_:-1);
                 gmod::demo::PlayerPose player;
-                if(player_index>=0 && outfit_ && gmod::demo::sample_player(demo_.players[player_index],time_,player)) {
+                if(player_index>=0 && outfit_
+                    && gmod::source::weapon_material_visible(actor.weapon_material_variant,player_index,demo_.recorder_player)
+                    && gmod::demo::sample_player(demo_.players[player_index],time_,player)) {
                     const int model=player.model>=0?player.model:fallback_model_;
                     const auto chest=outfit_->chest_attachments.find(model);
                     if(chest!=outfit_->chest_attachments.end()) {
@@ -8799,7 +8809,8 @@ private:
                 }
                 pose.ambient = *door_ambient_[slot];
             } else if (actor.kind == 6 || actor.kind == 11) {
-                if (vm_id_ >= 0 && actor.entry == vm_id_) {
+                if (vm_id_ >= 0 && actor.entry == vm_id_
+                    && gmod::source::weapon_material_visible(actor.weapon_material_variant,vm_player_,demo_.recorder_player)) {
                     if (actor.kind == 11) {
                         const auto held = gmod::demo::held_weapon_at(demo_,demo_.players[follow_],time_);
                         bool known = false;
@@ -9337,6 +9348,8 @@ LoadedScene load_scene(
     for (const auto& [brush,index] : moving_brushes)
         for (const auto& triangle : brush->triangles) world_materials.insert(triangle.material);
     const std::vector<std::filesystem::path>& content_roots = content.roots;
+    const gmod::source::CustomWeaponMaterials custom_weapons(content.gmod);
+    const bool custom_weapon_variants = demo && demo->recorder_player >= 0 && custom_weapons.enabled();
     // Looks a Source-relative path ("materials/x.vmt") up in every content root.
     auto find_source_file = [&](std::string relative) -> std::filesystem::path {
         std::replace(relative.begin(), relative.end(), '\\', '/');
@@ -9387,10 +9400,17 @@ LoadedScene load_scene(
     if (map_scene && animator) prop_data.skin.resize(prop_data.vertices.size());
     // Reads a VMT and, for patch/include materials, inherits $basetexture
     // from the included parent (searched across all roots, depth bounded).
-    std::function<gmod::source::vmt::Material(const std::string&, int)> load_vmt =
-        [&](const std::string& relative_vmt, int depth)
+    const auto find_material_file = [&](const std::string& relative, bool custom) {
+        if (custom) {
+            const auto path = custom_weapons.find_file(relative);
+            if (!path.empty()) return path;
+        }
+        return find_source_file(relative);
+    };
+    std::function<gmod::source::vmt::Material(const std::string&, int, bool)> load_vmt =
+        [&](const std::string& relative_vmt, int depth, bool custom)
         -> gmod::source::vmt::Material {
-        const auto path = find_source_file(relative_vmt);
+        const auto path = find_material_file(relative_vmt, custom);
         if (path.empty()) {
             return {};
         }
@@ -9410,7 +9430,7 @@ LoadedScene load_scene(
         }
         // Cache the file itself, not inherited results: parents depend on the current mount order.
         if (!parsed.include_path.empty() && depth < 8) {
-            auto parent = load_vmt(parsed.include_path, depth + 1);
+            auto parent = load_vmt(parsed.include_path, depth + 1, custom);
             if (parsed.shader.empty() || parsed.shader == "patch") {
                 parsed.shader = parent.shader;
             }
@@ -10155,17 +10175,36 @@ LoadedScene load_scene(
                            | (prop.actor_palette>=0 ? (1<<24):0), {}, 0}]
             .push_back(&prop);
     }
+    if (custom_weapon_variants) {
+        const auto count = actor_props.size();
+        for (std::size_t index = 0; index < count; ++index) {
+            auto& prop = actor_props[index];
+            if ((prop.actor_kind == 5 || prop.actor_kind == 10)
+                && prop.actor_index == demo->recorder_player) {
+                prop.weapon_material_variant = gmod::source::WeaponMaterialVariant::Recorder;
+            } else if (prop.actor_kind == 6 || prop.actor_kind == 11 || prop.actor_kind == 12) {
+                // View models are shared by spectators; back guns can change owner over time.
+                prop.weapon_material_variant = gmod::source::WeaponMaterialVariant::OtherPlayers;
+                auto custom = prop;
+                custom.weapon_material_variant = gmod::source::WeaponMaterialVariant::Recorder;
+                actor_props.push_back(std::move(custom));
+            }
+        }
+    }
+    constexpr int CustomWeaponFlag = 1 << 27;
     constexpr int VehiclePoseFlag = 1 << 26;
     constexpr int ViewModelFlag = 1 << 25;
     constexpr int VehicleSkinFlag = 1 << 24;
     constexpr int ArmClothingFlag = 1 << 22;
     constexpr int BackWeaponFlag = 1 << 23;
     constexpr int HiddenBadgeFlag = 1 << 21;
-    constexpr int VariantFlags = VehiclePoseFlag | ViewModelFlag | VehicleSkinFlag | BackWeaponFlag | ArmClothingFlag | HiddenBadgeFlag;
+    constexpr int VariantFlags = CustomWeaponFlag | VehiclePoseFlag | ViewModelFlag | VehicleSkinFlag | BackWeaponFlag | ArmClothingFlag | HiddenBadgeFlag;
     for (const auto& prop : actor_props) {
         // The player model keeps only its head visible; the server's clothing data
         // provides every body part (see compose_outfit).
         int body_code = 0;
+        if (prop.weapon_material_variant == gmod::source::WeaponMaterialVariant::Recorder)
+            body_code |= CustomWeaponFlag;
         if(prop.actor_kind==12) body_code|=BackWeaponFlag;
         if(prop.actor_kind==7) body_code|=ArmClothingFlag;
         if ((prop.actor_kind == 4 || prop.actor_kind == 7)
@@ -10713,6 +10752,7 @@ LoadedScene load_scene(
                     binding.weapon = prop->actor_weapon;
                     binding.attachment = prop->actor_attachment;
                     binding.attachment_sequence = prop->actor_sequence;
+                    binding.weapon_material_variant = prop->weapon_material_variant;
                     binding.model_path = prop->model;
                     binding.initial_hidden = prop->start_hidden;
                     std::copy(prop->origin, prop->origin + 3, binding.origin);
@@ -10746,8 +10786,8 @@ LoadedScene load_scene(
                 auto material_name = batch.material;
                 bool material_vmt_found = false;
                 for (const auto& candidate : batch.material_candidates) {
-                    if (!find_source_file(
-                            "materials/" + candidate + ".vmt").empty()) {
+                    if (((variant_code & CustomWeaponFlag) != 0 && !custom_weapons.find_override(candidate).empty())
+                        || !find_source_file("materials/" + candidate + ".vmt").empty()) {
                         material_name = candidate;
                         material_vmt_found = true;
                         break;
@@ -10765,6 +10805,10 @@ LoadedScene load_scene(
                         prop_log << batch.material_candidates[index];
                     }
                     prop_log << "\n";
+                }
+                if (!material_name.empty() && (variant_code & CustomWeaponFlag) != 0
+                    && !custom_weapons.find_override(material_name).empty()) {
+                    material_name = gmod::source::CustomWeaponMaterials::material_key(material_name);
                 }
                 if (!material_name.empty()) {
                     world_materials.insert(material_name);
@@ -10913,18 +10957,23 @@ LoadedScene load_scene(
         WorldMaterialTexture resolved{material};
         resolved.prop_material = prop_material_names.contains(material);
         gmod::source::vmt::Material parsed;
-        std::string vmt_name = material;
-        if (find_source_file("materials/" + vmt_name + ".vmt").empty()) {
+        const bool custom = gmod::source::CustomWeaponMaterials::is_custom(material);
+        std::string vmt_name = gmod::source::CustomWeaponMaterials::original_name(material);
+        if (custom) resolution_log << "RECORDER_WEAPON_OVERRIDE " << vmt_name << "\n";
+        const auto find_file = [&](const std::string& relative) {
+            return find_material_file(relative, custom);
+        };
+        if (find_file("materials/" + vmt_name + ".vmt").empty()) {
             const auto original = unpatched_name(material);
             if (!original.empty()) {
                 vmt_name = original;
             }
         }
         try {
-            parsed = load_vmt("materials/" + vmt_name + ".vmt", 0);
+            parsed = load_vmt("materials/" + vmt_name + ".vmt", 0, custom);
             if (parsed.shader == "subrect" && !parsed.model_material.empty()) {
                 const float scale = parsed.decal_scale;
-                parsed = load_vmt("materials/" + parsed.model_material + ".vmt", 0);
+                parsed = load_vmt("materials/" + parsed.model_material + ".vmt", 0, custom);
                 parsed.decal_scale = scale;
             }
         } catch (const std::exception& error) {
@@ -10963,13 +11012,13 @@ LoadedScene load_scene(
             resolved.alpha_mode = 2u;
         }
         if (water_surface && !parsed.normal_map.empty()) {
-            const auto normal = find_source_file("materials/" + parsed.normal_map + ".vtf");
+            const auto normal = find_file("materials/" + parsed.normal_map + ".vtf");
             if (!normal.empty()) {
                 parsed.base_texture = parsed.normal_map;
                 resolved.material_flags |= 256u;
             }
         }
-        if (find_source_file("materials/" + vmt_name + ".vmt").empty()) {
+        if (find_file("materials/" + vmt_name + ".vmt").empty()) {
             ++missing_vmt;
             resolved.neutral_placeholder = resolved.prop_material;
             resolution_log << "MISSING_VMT " << material << "\n";
@@ -10994,7 +11043,7 @@ LoadedScene load_scene(
                            << " material=" << material << "\n";
         } else {
             ++resolved_vmts;
-            const auto vtf = find_source_file(
+            const auto vtf = find_file(
                 "materials/" + parsed.base_texture + ".vtf");
             if (!vtf.empty()) {
                 ++resolved_vtfs;
@@ -11025,12 +11074,12 @@ LoadedScene load_scene(
                 }
                 if (parsed.shader == "worldvertextransition"
                     && !parsed.base_texture2.empty()) {
-                    resolved.vtf2 = find_source_file(
+                    resolved.vtf2 = find_file(
                         "materials/" + parsed.base_texture2 + ".vtf");
                     if (!resolved.vtf2.empty()) {
                         resolved.material_flags |= 1u;
                         if (!parsed.blend_modulate_texture.empty()) {
-                            resolved.modulate = find_source_file(
+                            resolved.modulate = find_file(
                                 "materials/" + parsed.blend_modulate_texture + ".vtf");
                             if (!resolved.modulate.empty()) {
                                 resolved.material_flags |= 2u;

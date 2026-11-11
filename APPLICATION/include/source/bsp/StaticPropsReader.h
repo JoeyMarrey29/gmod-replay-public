@@ -1,5 +1,7 @@
 #pragma once
 
+#include "source/CustomWeaponMaterials.h"
+
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -34,6 +36,7 @@ struct StaticProp {
     std::string actor_parent_model;
     // Skinned actors: bone palette slot when it is not the player's own (view models).
     int actor_palette = -1;
+    WeaponMaterialVariant weapon_material_variant = WeaponMaterialVariant::Standard;
     float fade_min = 0.0f;
     // Source hides a static prop beyond this distance; <= 0 means never fade.
     float fade_max = 0.0f;
