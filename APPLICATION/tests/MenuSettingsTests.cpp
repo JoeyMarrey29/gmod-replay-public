@@ -65,6 +65,7 @@ int main(int argc, char** argv) {
         require(sound_category("custom/wind.mp3", true) == SoundCategory::Ambient, "Soundscape category.");
         require(sound_category("player/footsteps/concrete1.wav") == SoundCategory::Other, "Footstep category.");
         auto& settings = gmod::ui::settings();
+        require(settings.flashbang_screen, "Flashbang screen must default to enabled.");
         require(!settings.reflections && settings.lighting && !settings.bank_raid_lighting,"Graphics defaults are incorrect.");
         settings.names_through_walls = true; // Legacy independent name setting.
         require(!settings.esp_through_walls(), "Legacy names must respect ESP None.");
@@ -102,7 +103,17 @@ int main(int argc, char** argv) {
             click(window, 200, 234);
             require(settings.esp_through_walls(), "ESP mode must support direct selection from None.");
             click(window, 200, 184);
-            click(window, 200, 300); // Back.
+            click(window, 200, 286); // Flashbang white-screen effect.
+            require(!settings.flashbang_screen, "Display flashbang toggle did not disable the white screen.");
+            gmod::ui::ViewerSettings flash_restored;
+            flash_restored.load();
+            require(!flash_restored.flashbang_screen, "Disabled flashbang screen did not persist.");
+            capture("display-flash-disabled.bmp");
+            click(window, 200, 286);
+            require(settings.flashbang_screen, "Display flashbang toggle did not re-enable the white screen.");
+            flash_restored.load();
+            require(flash_restored.flashbang_screen, "Enabled flashbang screen did not persist.");
+            click(window, 200, 325); // Back.
             click(window, 200, 230); // Audio submenu.
             RECT rect{};
             GetClientRect(window, &rect);

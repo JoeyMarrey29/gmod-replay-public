@@ -207,6 +207,7 @@ template<class A, class K, class V> void fields(A& a, std::unordered_map<K, V>& 
 }
 
 template<class A> void fields(A& a, TimedText& v) { a(v.time, v.text); }
+template<class A> void fields(A& a, TimedFloat& v) { a(v.time, v.value); }
 template<class A> void fields(A& a, PlayerLookKey& v) { a(v.time,v.pitch,v.yaw); }
 template<class A> void fields(A& a, PlayerInfoKey& v) { a(v.time, v.health, v.team, v.life_state, v.weapon); }
 template<class A> void fields(A& a, ActiveWeaponKey& v) { a(v.time, v.weapon, v.handle, v.class_name); }
@@ -215,13 +216,13 @@ template<class A> void fields(A& a, DemoPlayer& v) {
       v.connected_at, v.disconnected_at, v.voice_clips, v.samples, v.look, v.presence, v.seated,
       v.vehicle_links, v.info, v.first_name, v.last_name, v.job_team, v.police_rank,
       v.medic_rank, v.firefighter_rank, v.outfit, v.ragdoll, v.radio_channel,
-      v.restrained, v.phone_open, v.phone_call, v.emotes, v.active_weapon, v.shots, v.attacks, v.reloads);
+      v.restrained, v.phone_open, v.phone_call, v.flashed, v.emotes, v.active_weapon, v.shots, v.attacks, v.reloads);
 }
 template<class A> void fields(A& a, DemoProp::Animation& v) { a(v.time,v.sequence,v.cycle,v.rate); }
 template<class A> void fields(A& a, DemoProp& v) {
     a(v.entity, v.model, v.skin, v.body, v.vehicle, v.driver_attachment, v.brush,
       v.map_attached, v.map_rotation, v.map_created_id, v.seat, v.keys, v.hidden, v.owners, v.poses, v.colors, v.animations, v.back_gun, v.back_weapon,
-      v.vehicle_id, v.registration, v.plate_skin, v.owner);
+      v.vehicle_id, v.registration, v.plate_skin, v.owner, v.flashbang);
 }
 template<class A> void fields(A& a, DemoDoor& v) { a(v.entity, v.has_origin, v.origin, v.keys, v.yaws, v.hidden); }
 template<class A> void fields(A& a, DemoEffect& v) {

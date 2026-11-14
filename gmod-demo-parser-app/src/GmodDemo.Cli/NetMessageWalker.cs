@@ -342,7 +342,7 @@ public sealed class NetMessageWalker
         }
     }
 
-    private static bool TrySkipServerInfo(ref BitReader r)
+    internal static float ReadServerTickInterval(ref BitReader r)
     {
         r.ReadUBitLong(16);
         r.ReadUBitLong(32);
@@ -356,7 +356,12 @@ public sealed class NetMessageWalker
 
         r.ReadByte();
         r.ReadByte();
-        r.ReadUBitLong(32);
+        return r.ReadFloat();
+    }
+
+    private static bool TrySkipServerInfo(ref BitReader r)
+    {
+        ReadServerTickInterval(ref r);
         r.ReadByte();
         r.ReadString();
         r.ReadString();

@@ -54,6 +54,7 @@ void test_disk_cache(const std::filesystem::path& root) {
     player.info.push_back({2, 50, 3, 0, "weapon_test"});
     player.active_weapon.push_back({3, 5, 8197, "weapon_test"});
     player.attacks.push_back({4, 0});
+    player.flashed = {{10, 25}, {30, 0}};
     auto& prop = original.props.emplace_back();
     prop.vehicle = true;
     prop.driver_attachment = std::array<float, 12>{1, 2, 3};
@@ -65,6 +66,7 @@ void test_disk_cache(const std::filesystem::path& root) {
     auto& dropped = original.props.emplace_back();
     dropped.owner = {{2, 63}, {4, -1}};
     dropped.owners = {{1, 24}, {6, -1}};
+    dropped.flashbang = true;
     original.doors.emplace_back().yaws.push_back({1, 90, 0, 0});
     original.effects.emplace_back().name = "blood";
     original.clothing.emplace_back().skin = "1";
@@ -102,6 +104,9 @@ void test_disk_cache(const std::filesystem::path& root) {
         && restored->players[0].samples[0].x == 42 && restored->players[0].first_name[0].text == "Character"
         && restored->players[0].info[0].weapon == "weapon_test"
         && restored->players[0].active_weapon[0].handle == 8197
+        && restored->players[0].flashed.size() == 2 && restored->players[0].flashed[0].value == 25
+        && restored->players[0].flashed[1].time == 30 && restored->players[0].flashed[1].value == 0
+        && restored->props[1].flashbang && !restored->props[0].flashbang
         && restored->props[0].driver_attachment->at(2) == 3 && restored->props[0].keys[0].x == 99
         && restored->props[0].vehicle_id[0].text == "b"
         && restored->props[0].registration[1].text == "AB12"

@@ -56,6 +56,11 @@ struct TimedInt {
     int value = 0;
 };
 
+struct TimedFloat {
+    float time = 0.0f;
+    float value = 0.0f;
+};
+
 struct PlayerLookKey {
     float time = 0, pitch = 0, yaw = 0;
 };
@@ -125,6 +130,7 @@ struct DemoPlayer {
     std::vector<TimedInt> restrained;  // 0 free, 1 handcuffs, 2 zip ties
     std::vector<TimedInt> phone_open;
     std::vector<TimedInt> phone_call;
+    std::vector<TimedFloat> flashed; // FLASHED deadline converted from server CurTime to demo time
     std::vector<EmoteKey> emotes;      // ph_playanim / ph_stopanim broadcasts, in time order
     std::vector<ActiveWeaponKey> active_weapon;
     std::vector<float> shots;           // muzzle-flash parity changes of the active weapon
@@ -189,6 +195,7 @@ struct DemoProp {
     std::optional<std::array<float,12>> map_rotation;
     int map_created_id = -1;
     bool back_gun = false; // recorded prop_back_gun attached to a player
+    bool flashbang = false; // thrown ent_m84, not the held weapon or a dropped inventory item
     std::vector<TimedInt> back_weapon; // networked swep entity used to suppress the held gun
     bool seat = false;      // prop_vehicle_prisoner_pod: occupant bookkeeping only
     std::vector<PropKey> keys;

@@ -1,4 +1,6 @@
 #include "audio/AudioSystem.h"
+#include "demo/FlashbangEffects.h"
+#include "source/Vfs.h"
 
 #include <windows.h>
 
@@ -35,7 +37,7 @@ void wait_for_minimum_voices(const gmod::audio::AudioSystem& audio, int count) {
 }
 }
 
-int main() {
+int main(int argc, char** argv) {
     const auto root = std::filesystem::temp_directory_path()
         / ("gmod-replay-audio-" + std::to_string(GetCurrentProcessId()));
     const auto sound = root / "sound" / "alarm.wav";
@@ -43,6 +45,37 @@ int main() {
     const auto expired_sound = root / "sound" / "expired.wav";
     const auto log = root / "audio.log";
     try {
+        if (argc == 3 && std::string_view(argv[1]) == "--flashbang-gma") {
+            const std::filesystem::path archive(argv[2]);
+            if (!gmod::source::vfs::mount(archive)
+                || !gmod::source::vfs::exists(archive / "models/perpheads/weapons/w_m84.mdl"))
+                throw std::runtime_error("PerpHeads GMA or M84 model is unavailable.");
+            std::filesystem::create_directories(root);
+            {
+                gmod::audio::AudioSystem audio({archive},log,{});
+                audio.set_master_volume(0);
+                const float position[3]{}, right[3]{1,0,0};
+                audio.set_listener(position,right);
+                audio.play_sound(gmod::demo::FlashbangSound,position,6,6000,1,0.2f);
+                wait_for_voices(audio,1);
+                audio.world_set_paused(true);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+                wait_for_voices(audio,1);
+                audio.world_stop_all();
+                wait_for_voices(audio,0);
+                audio.world_set_paused(false);
+                audio.play_sound(gmod::demo::FlashbangSound,position,6,6000,1,119);
+                std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                wait_for_voices(audio,0);
+                audio.play_sound(gmod::demo::FlashbangSound,position,6,6000);
+                wait_for_voices(audio,1);
+                wait_for_voices(audio,0);
+            }
+            std::filesystem::remove(log);
+            std::filesystem::remove(root);
+            std::cout << "PASS: original PerpHeads GMA MP3 decode, offset, pause, seek cancellation, expiry and replay\n";
+            return 0;
+        }
         std::filesystem::create_directories(sound.parent_path());
         const auto write_fixture = [](const std::filesystem::path& path, std::uint32_t seconds) {
             std::ofstream file(path, std::ios::binary);

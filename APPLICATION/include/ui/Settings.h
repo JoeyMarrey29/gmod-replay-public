@@ -18,6 +18,7 @@ struct ViewerSettings {
     bool dialogs = true;              // NPC dialogue boxes
     bool decals = true;               // bullet holes, scorch marks, blood
     bool muzzle_flash = true;
+    bool flashbang_screen = true;     // white-screen fade for an affected first-person player
     bool reflections = false;        // planar water reflections
     bool lighting = true;            // off: fullbright world and models
     bool bank_raid_lighting = false;  // replay baked bank normal/raid light switches

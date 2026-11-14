@@ -43,6 +43,7 @@ void ViewerSettings::load() {
         else if (key == "dialogs") dialogs = flag;
         else if (key == "decals") decals = flag;
         else if (key == "muzzle_flash") muzzle_flash = flag;
+        else if (key == "flashbang_screen") flashbang_screen = flag;
         else if (key == "reflections") reflections = flag;
         else if (key == "lighting") lighting = flag;
         else if (key == "bank_raid_lighting") bank_raid_lighting = flag;
@@ -89,6 +90,7 @@ bool ViewerSettings::save() const {
            << "\nspeed_mph=" << speed_mph << "\nkill_feed=" << kill_feed
            << "\nradio_hud=" << radio_hud << "\ndialogs=" << dialogs
            << "\ndecals=" << decals << "\nmuzzle_flash=" << muzzle_flash
+           << "\nflashbang_screen=" << flashbang_screen
            << "\nreflections=" << reflections << "\nlighting=" << lighting
            << "\nbank_raid_lighting=" << bank_raid_lighting
            << "\nvolume=" << volume

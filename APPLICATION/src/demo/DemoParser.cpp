@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <iostream>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
@@ -408,6 +409,7 @@ private:
         bool vehicle = false;
         bool weapon = false;
         int sequence=0;
+        bool deleted=false;
         float cycle=0,rate=1;
         bool cycle_recorded=false;
         int owner = -1;
@@ -658,11 +660,13 @@ private:
         bool has_number = false;
         float vector_value[3]{1.0f, 1.0f, 1.0f};
         bool has_vector = false;
+        std::optional<float> end_time;
         json.object([&](std::string_view key) {
             if (key == "e") entity = static_cast<int>(json.number());
             else if (key == "time") time = static_cast<float>(json.number());
             else if (key == "op") op = json.string_value();
             else if (key == "key") key_name = json.string_value();
+            else if (key == "endTime") end_time = static_cast<float>(json.number());
             else if (key == "value") {
                 const char next = json.peek();
                 if (next == '"') {
@@ -691,10 +695,22 @@ private:
         if (op == "remove") {
             if (auto* prop = track_at(entity, time))
                 push_changed(prop->owner, TimedInt{time, -1});
+            const auto player = player_for_entity(entity, time);
+            if (player != NoPlayer) data_.players[player].flashed.push_back({time, 0});
             return;
         }
         unset = op == "unset";
         if (op != "set" && !unset) return;
+        if (key_name == "flashed") {
+            const auto player = player_for_entity(entity, time);
+            if (player == NoPlayer) return;
+            if (!unset && (!end_time || !std::isfinite(*end_time))) {
+                std::cerr << "FLASH_CLOCK_UNAVAILABLE time=" << time << " entity=" << entity << "\n";
+                return;
+            }
+            data_.players[player].flashed.push_back({time, unset ? 0 : *end_time});
+            return;
+        }
         if (key_name == "registration" || key_name == "licenseplateskin" || key_name == "id") {
             if (auto* prop = track_at(entity, time); prop && prop->vehicle) {
                 auto& keys = key_name == "id" ? prop->vehicle_id
@@ -1197,6 +1213,9 @@ private:
                 if (key == "parent") { object.parent = static_cast<int>(json.number()); return; }
                 if (key == "hidden") { object.hidden = json.boolean(); return; }
                 break;
+            case 7:
+                if (key == "deleted") { object.deleted = json.boolean(); return; }
+                break;
             case 8:
                 if (key == "sequence") { object.sequence=static_cast<int>(json.number());return; }
                 if (key == "luaClass") { object.lua_class = json.string_view_value(scratch_lua); return; }
@@ -1480,6 +1499,7 @@ private:
                         && (object.parent > 0 || is_bank_shutter(object.model));
                     prop.map_created_id = object.map_created_id;
                     prop.back_gun = object.lua_class=="prop_back_gun";
+                    prop.flashbang = object.lua_class=="ent_m84";
                     prop.seat = kind == 3;
                     prop.keys.push_back(key);
                     if (object.owner >= 0) prop.owners.push_back({time, object.owner});
@@ -1593,6 +1613,21 @@ private:
                 break;
             }
             if (prop_it != prop_track_.end()) {
+                const auto& prop = data_.props[prop_it->second];
+                if (prop.flashbang && object.deleted) {
+                    const auto position = std::find_if(prop.keys.rbegin(), prop.keys.rend(),
+                        [](const PropKey& key) { return key.has_position; });
+                    if (position != prop.keys.rend()) {
+                        DemoEffect effect;
+                        effect.time = time;
+                        effect.kind = "dispatch";
+                        effect.name = "flashbang_smoke";
+                        effect.entity = object.entity;
+                        effect.origin = {position->x, position->y, position->z + 5};
+                        effect.scale = 2;
+                        data_.effects.push_back(std::move(effect));
+                    }
+                }
                 close_track(prop_it->second, time);
                 dead_tracks_[object.entity] = prop_it->second;
                 prop_track_.erase(prop_it);
@@ -1746,6 +1781,8 @@ private:
         std::stable_sort(data_.effects.begin(), data_.effects.end(),
             [](const DemoEffect& a, const DemoEffect& b) { return a.time < b.time; });
         for (auto& player : data_.players) {
+            std::stable_sort(player.flashed.begin(),player.flashed.end(),
+                [](const TimedFloat& a,const TimedFloat& b) { return a.time < b.time; });
             std::stable_sort(player.attacks.begin(),player.attacks.end(),
                 [](const TimedInt& a,const TimedInt& b) { return a.time < b.time; });
             std::stable_sort(player.reloads.begin(),player.reloads.end(),
@@ -2037,6 +2074,7 @@ void rescale_times(DemoData& data, float scale) {
             for (auto& key : *keys) key.time *= scale;
         }
         for (auto& key : player.emotes) key.time *= scale;
+        for (auto& key : player.flashed) { key.time *= scale; key.value *= scale; }
         for (auto& key : player.active_weapon) key.time *= scale;
         for (auto& shot : player.shots) shot *= scale;
         for (auto& attack : player.attacks) attack.time *= scale;

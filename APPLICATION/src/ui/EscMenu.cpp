@@ -174,6 +174,7 @@ std::vector<EscMenu::Item> EscMenu::layout(int width, int& height) const {
                 items.back().esp_mode = mode;
             }
             note(L"Names show through walls only with\nOutline through walls enabled.");
+            add(ItemKind::Toggle, L"Flashbang white-screen effect", &options.flashbang_screen, RowHeight);
         } else if (page_ == 2) {
             add(ItemKind::Toggle, L"Car speed", &options.car_speed, RowHeight);
             add(ItemKind::Toggle, L"Speed in mph (off: km/h)", &options.speed_mph, RowHeight);

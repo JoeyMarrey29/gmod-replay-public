@@ -876,6 +876,22 @@ public sealed class EventCollector
     {
         var walk = _walker.Walk(packet.Payload);
         _precache.AddPacket(packet.Payload, walk.Messages, packet.Tick);
+        foreach (var span in walk.Messages.Where(span =>
+            span.Type is NetMessageType.NetTick or NetMessageType.SvcServerInfo))
+        {
+            var clock = new BitReader(packet.Payload);
+            clock.Seek(span.StartBit + NetMessageLayout.TypeBits);
+            if (span.Type == NetMessageType.NetTick)
+            {
+                var serverTick = clock.ReadUBitLong(32);
+                if (!clock.IsOverflowed) _perpheads.SetServerTick(packet.Tick, serverTick);
+            }
+            else
+            {
+                var interval = NetMessageWalker.ReadServerTickInterval(ref clock);
+                if (!clock.IsOverflowed) _perpheads.SetServerTickInterval(interval);
+            }
+        }
         foreach (var span in walk.Messages)
         {
             var reader = new BitReader(packet.Payload);

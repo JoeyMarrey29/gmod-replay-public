@@ -26,6 +26,7 @@
 #include "demo/BackWeapons.h"
 #include "demo/MeleePlayback.h"
 #include "demo/FireEffects.h"
+#include "demo/FlashbangEffects.h"
 #include "demo/Perpheads.h"
 #include "demo/ModelIdentifiers.h"
 #include "ui/MainMenu.h"
@@ -617,6 +618,7 @@ struct EffectDraw {
     bool additive = false;
     bool mist = false;
     bool smoke = false;
+    bool blast = false;
 };
 
 // What the demo's sound effects need: the floor under a foot, which step sounds a surface
@@ -1305,6 +1307,7 @@ public:
         follow_.reset();
         follow_look_.reset();
         first_person_.reset();
+        flash_opacity_ = 0;
         scope_fov_ = 0;
         outline_active_ = false;
         outline_through_walls_ = false;
@@ -1372,7 +1375,7 @@ public:
     ID3D12Resource* world_resource() const { return world_vertex_buffer_.Get(); }
     ID3D12Resource* map_prop_resource() const { return map_prop_vertex_buffer_.Get(); }
     bool demo_state_clean() const {
-        return !audio_ && !follow_ && !follow_look_ && !frame_text_painter_ && !first_person_ && !water_demo_time_ && scope_fov_ == 0 && !outline_active_
+        return !audio_ && !follow_ && !follow_look_ && !frame_text_painter_ && !first_person_ && flash_opacity_ == 0 && !water_demo_time_ && scope_fov_ == 0 && !outline_active_
             && effect_vertices_.empty() && effect_draws_.empty()
             && std::none_of(dynamic_poses_.begin(), dynamic_poses_.end(),
                 [](const auto& pose) { return pose.active; })
@@ -1605,6 +1608,11 @@ public:
         }
         rendering_view_model = true;
         draw_scene(false);
+        if (flash_opacity_ > 0) {
+            command_list_->SetPipelineState(white_screen_pipeline_.Get());
+            command_list_->SetGraphicsRoot32BitConstants(3, 1, &flash_opacity_, 0);
+            command_list_->DrawInstanced(3, 1, 0, 0);
+        }
 
         // Labels belong to the swap-chain image so game capture sees them with
         // the scene/halos. Paint after updating this frame's camera projection.
@@ -1854,6 +1862,8 @@ public:
         float pitch_degrees = 0.0f;
     };
     void set_first_person(std::optional<FirstPersonView> view) { first_person_ = view; }
+    void set_flash_opacity(float opacity) { flash_opacity_ = std::clamp(opacity, 0.0f, 1.0f); }
+    float flash_opacity() const { return flash_opacity_; }
     void attach_audio(std::unique_ptr<gmod::audio::AudioSystem> audio) {
         audio_ = std::move(audio);
     }
@@ -3745,6 +3755,7 @@ private:
 
     void create_effect_pipelines(D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline) {
         const char* source = R"(
+            cbuffer Flash : register(b1) { float screenOpacity; };
             cbuffer Camera : register(b0) {
                 row_major float4x4 viewProjection;
                 float4 forward; float4 right; float4 up;
@@ -3777,6 +3788,18 @@ private:
                 float4 color = baseTexture.Sample(baseSampler,clamp(p.uv,0.001,0.999));
                 return float4(color.rgb*p.color,color.a*saturate(p.opacity));
             }
+            float4 blast(Pixel p) : SV_TARGET {
+                float radius = length(p.uv * 2 - 1);
+                return float4(p.color, saturate(1 - radius) * saturate(p.opacity));
+            }
+            Pixel screen(uint id : SV_VertexID) {
+                Pixel p;
+                float2 corner = float2((id << 1) & 2, id & 2);
+                p.position = float4(corner * 2 - 1, 0, 1);
+                p.uv = corner; p.opacity = 1; p.color = 1;
+                return p;
+            }
+            float4 white(Pixel p) : SV_TARGET { return float4(1,1,1,screenOpacity); }
         )";
         auto compile = [&](const char* entry, const char* target) {
             ComPtr<ID3DBlob> shader, errors;
@@ -3791,6 +3814,9 @@ private:
         const auto flash = compile("flash","ps_5_0");
         const auto mist = compile("mist","ps_5_0");
         const auto smoke = compile("smoke","ps_5_0");
+        const auto blast = compile("blast","ps_5_0");
+        const auto screen = compile("screen","vs_5_0");
+        const auto white = compile("white","ps_5_0");
         const D3D12_INPUT_ELEMENT_DESC input[]{
             {"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,0,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
             {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,12,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
@@ -3811,6 +3837,9 @@ private:
         blend.DestBlend = D3D12_BLEND_ONE;
         check_hresult(device_->CreateGraphicsPipelineState(&pipeline,IID_PPV_ARGS(&flash_pipeline_)),
                       "Create muzzle flash pipeline");
+        pipeline.PS = {blast->GetBufferPointer(),blast->GetBufferSize()};
+        check_hresult(device_->CreateGraphicsPipelineState(&pipeline,IID_PPV_ARGS(&blast_pipeline_)),
+                      "Create flashbang burst pipeline");
         pipeline.PS = {mist->GetBufferPointer(),mist->GetBufferSize()};
         blend.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
         check_hresult(device_->CreateGraphicsPipelineState(&pipeline,IID_PPV_ARGS(&mist_pipeline_)),
@@ -3818,6 +3847,13 @@ private:
         pipeline.PS = {smoke->GetBufferPointer(),smoke->GetBufferSize()};
         check_hresult(device_->CreateGraphicsPipelineState(&pipeline,IID_PPV_ARGS(&smoke_pipeline_)),
                       "Create smoke puff pipeline");
+        pipeline.InputLayout = {};
+        pipeline.VS = {screen->GetBufferPointer(),screen->GetBufferSize()};
+        pipeline.PS = {white->GetBufferPointer(),white->GetBufferSize()};
+        pipeline.DepthStencilState.DepthEnable = FALSE;
+        pipeline.DSVFormat = DXGI_FORMAT_UNKNOWN;
+        check_hresult(device_->CreateGraphicsPipelineState(&pipeline,IID_PPV_ARGS(&white_screen_pipeline_)),
+                      "Create PerpHeads WhiteScreen pipeline");
     }
 
     void upload_effect_vertices(UINT frame) {
@@ -3841,6 +3877,11 @@ private:
             static_cast<UINT>(effect_vertices_.size()*sizeof(EffectVertex)),sizeof(EffectVertex)};
         command_list_->IASetVertexBuffers(0,1,&view);
         for (const auto& draw : effect_draws_) {
+            if (draw.blast) {
+                command_list_->SetPipelineState(blast_pipeline_.Get());
+                command_list_->DrawInstanced(draw.count,1,draw.first,0);
+                continue;
+            }
             const auto* material = effect_material(draw.material);
             if (!material || material->vtf.empty()) continue;
             const auto index = static_cast<std::size_t>(material-world_materials_.data());
@@ -4626,6 +4667,8 @@ private:
     std::array<ComPtr<ID3D12Resource>, FrameCount> render_targets_;
     ComPtr<ID3D12PipelineState> decal_pipeline_;
     ComPtr<ID3D12PipelineState> flash_pipeline_;
+    ComPtr<ID3D12PipelineState> blast_pipeline_, white_screen_pipeline_;
+    float flash_opacity_ = 0;
     ComPtr<ID3D12PipelineState> mist_pipeline_;
     ComPtr<ID3D12PipelineState> smoke_pipeline_;
     std::array<ComPtr<ID3D12Resource>,FrameCount> effect_buffers_;
@@ -5260,6 +5303,95 @@ public:
         seek(original_time); update(renderer,0,false); renderer.render();
         std::ofstream(folder / L"identifiers-render-test.txt")
             << "PASS original front/rear plate meshes, recorded uniform badge, seek and exact plate-transform rewind\n";
+    }
+
+    void test_flashbang_render(Dx12Foundation& renderer,const std::filesystem::path& folder) {
+        const auto effect = std::find_if(demo_.effects.begin(),demo_.effects.end(),gmod::demo::flashbang_effect);
+        if (effect == demo_.effects.end()) throw std::runtime_error("Flashbang render test needs a recorded detonation.");
+        const float sample_time = effect->time + 0.02f;
+        const auto victim = std::find_if(demo_.players.begin(),demo_.players.end(),
+            [&](const auto& player) { return gmod::demo::flash_opacity(player,sample_time) > 0.5f; });
+        if (victim == demo_.players.end()) throw std::runtime_error("Flashbang render test needs a recorded victim.");
+        const int original_follow = follow_;
+        const bool original_free = free_view_, original_first = first_person_;
+        const float original_time = time_;
+        auto& options = gmod::ui::settings();
+        const bool original_flashbang_screen = options.flashbang_screen;
+        options.flashbang_screen = true;
+        renderer.set_frame_text_painter({});
+        follow_ = static_cast<int>(victim - demo_.players.begin()); free_view_ = false; first_person_ = true;
+        seek(sample_time); update(renderer,0,false); renderer.render();
+        const float opacity = renderer.flash_opacity();
+        if (opacity <= 0.5f) throw std::runtime_error("Recorded first-person white flash was not applied.");
+        renderer.capture_bmp((folder/L"flashbang-white.bmp").wstring());
+        renderer.set_flash_opacity(0); renderer.render();
+        renderer.capture_bmp((folder/L"flashbang-clear.bmp").wstring());
+        const auto pixels = [&](const wchar_t* name) {
+            std::ifstream file(folder/name,std::ios::binary);
+            const std::vector<char> data(std::istreambuf_iterator<char>(file),{});
+            if (data.size() < sizeof(BITMAPFILEHEADER)+sizeof(BITMAPINFOHEADER))
+                throw std::runtime_error("Missing flashbang render capture.");
+            BITMAPFILEHEADER header{}; BITMAPINFOHEADER info{};
+            std::memcpy(&header,data.data(),sizeof(header));
+            std::memcpy(&info,data.data()+sizeof(header),sizeof(info));
+            if (info.biWidth <= 0 || info.biHeight <= 0 || (info.biBitCount != 24 && info.biBitCount != 32))
+                throw std::runtime_error("Invalid flashbang render capture.");
+            const std::size_t stride = (std::size_t(info.biWidth)*(info.biBitCount/8)+3)&~std::size_t(3);
+            if (header.bfOffBits + stride*info.biHeight > data.size())
+                throw std::runtime_error("Truncated flashbang render capture.");
+            std::vector<unsigned char> result;
+            for (int y=0;y<info.biHeight;++y) for (int x=0;x<info.biWidth;++x) for (int c=0;c<3;++c)
+                result.push_back(static_cast<unsigned char>(data[header.bfOffBits+y*stride+x*(info.biBitCount/8)+c]));
+            return result;
+        };
+        const auto white = pixels(L"flashbang-white.bmp"), clear = pixels(L"flashbang-clear.bmp");
+        if (white.size() != clear.size()) throw std::runtime_error("Flashbang capture sizes differ.");
+        std::size_t matched = 0, brighter = 0;
+        for (std::size_t i=0;i<white.size();++i) {
+            if (std::abs(float(white[i])-(clear[i]+opacity*(255-clear[i]))) <= 3) ++matched;
+            if (white[i] > clear[i]+10) ++brighter;
+        }
+        if (matched < white.size()*0.95 || brighter < white.size()*0.5)
+            throw std::runtime_error("WhiteScreen did not brighten the captured scene with the recorded alpha.");
+        options.flashbang_screen = false; update(renderer,0,false); renderer.render();
+        if (renderer.flash_opacity() != 0) throw std::runtime_error("Disabling flashbang screen did not clear the paused flash.");
+        renderer.capture_bmp((folder/L"flashbang-disabled.bmp").wstring());
+        if (pixels(L"flashbang-disabled.bmp") != clear)
+            throw std::runtime_error("Disabled flashbang screen changed the underlying scene.");
+        seek(sample_time - 1); update(renderer,0,false);
+        seek(sample_time); update(renderer,0,false);
+        if (renderer.flash_opacity() != 0) throw std::runtime_error("Seeking bypassed the disabled flashbang screen setting.");
+        options.flashbang_screen = true; update(renderer,0,false);
+        if (std::fabs(renderer.flash_opacity()-opacity)>0.0001f)
+            throw std::runtime_error("Re-enabling flashbang screen did not restore the recorded fade.");
+        renderer.set_flash_opacity(0);
+        for (int particle=0;particle<gmod::demo::flashbang_smoke_count(*effect);++particle) {
+            const auto* material = renderer.effect_material(gmod::demo::flashbang_smoke_material(*effect,particle));
+            if (!material || material->vtf.empty()) throw std::runtime_error("Original flashbang smoke material is unavailable.");
+        }
+        renderer.set_first_person(Dx12Foundation::FirstPersonView{
+            effect->origin[0]-64,effect->origin[1],effect->origin[2]+64,0,45});
+        renderer.render(); renderer.capture_bmp((folder/L"flashbang-burst.bmp").wstring());
+        renderer.set_combat_effects({},{}); renderer.render();
+        renderer.capture_bmp((folder/L"flashbang-no-burst.bmp").wstring());
+        if (pixels(L"flashbang-burst.bmp") == pixels(L"flashbang-no-burst.bmp"))
+            throw std::runtime_error("World flashbang detonation did not render.");
+        first_person_ = false; update(renderer,0,false); renderer.render();
+        if (renderer.flash_opacity() != 0) throw std::runtime_error("Third person inherited the victim's white screen.");
+        first_person_ = true; free_view_ = true; update(renderer,0,false);
+        if (renderer.flash_opacity() != 0) throw std::runtime_error("Free camera inherited the victim's white screen.");
+        free_view_ = false; seek(victim->flashed.back().value + 1); update(renderer,0,false);
+        if (renderer.flash_opacity() != 0) throw std::runtime_error("White screen outlasted FLASHED.");
+        seek(sample_time); update(renderer,0,false);
+        if (std::fabs(renderer.flash_opacity()-opacity)>0.0001f)
+            throw std::runtime_error("Rewinding did not restore the recorded white fade.");
+        follow_ = original_follow; free_view_ = original_free; first_person_ = original_first;
+        options.flashbang_screen = original_flashbang_screen;
+        seek(original_time); update(renderer,0,false); renderer.render();
+        renderer.set_frame_text_painter([this,&renderer](HDC dc,int width,int height) {
+            return paint_frame_overlays(dc,width,height,renderer);
+        });
+        std::ofstream(folder/L"flashbang-render-test.txt") << "PASS recorded white-screen blend, live Display toggle, disabled seek, captured brightness, world burst, original smoke materials, third/free-camera isolation, expiry and rewind\n";
     }
 
     void test_fire_render(Dx12Foundation& renderer,const std::filesystem::path& folder) {
@@ -5898,6 +6030,38 @@ private:
         }
         std::vector<EffectVertex> vertices;
         std::vector<EffectDraw> draws;
+        const auto flash_begin = std::lower_bound(demo_.effects.begin(),demo_.effects.end(),
+            time_ - gmod::demo::FlashbangSmokeLifetime,
+            [](const auto& effect,float time) { return effect.time < time; });
+        for (auto effect = flash_begin; effect != demo_.effects.end() && effect->time <= time_; ++effect) {
+            if (!gmod::demo::flashbang_effect(*effect)) continue;
+            const float age = time_ - effect->time;
+            if (age < gmod::demo::FlashbangBurstLifetime) {
+                EffectDraw draw{static_cast<UINT>(vertices.size()),6,{},true,false,false,true};
+                for (const int corner : {0,1,2,0,2,3}) {
+                    const float u = corner == 0 || corner == 3 ? 0.0f : 1.0f;
+                    const float v = corner < 2 ? 0.0f : 1.0f;
+                    vertices.push_back({{-effect->origin[0],effect->origin[2],-effect->origin[1]},
+                        {u,v},1 - age / gmod::demo::FlashbangBurstLifetime,60 * effect->scale,{4,4,4}});
+                }
+                draws.push_back(std::move(draw));
+            }
+            if (!g_disable_smoke) {
+                for (int particle = 0; particle < gmod::demo::flashbang_smoke_count(*effect); ++particle) {
+                    const auto puff = gmod::demo::flashbang_smoke_particle(*effect,particle,time_);
+                    if (puff.opacity <= 0) continue;
+                    EffectDraw draw{static_cast<UINT>(vertices.size()),6,
+                        gmod::demo::flashbang_smoke_material(*effect,particle),false,false,true};
+                    for (const int corner : {0,1,2,0,2,3}) {
+                        const float u = corner == 0 || corner == 3 ? 0.0f : 1.0f;
+                        const float v = corner < 2 ? 0.0f : 1.0f;
+                        vertices.push_back({{-puff.position[0],puff.position[2],-puff.position[1]},
+                            {u,v},puff.opacity,puff.radius,{puff.color[0],puff.color[1],puff.color[2]}});
+                    }
+                    draws.push_back(std::move(draw));
+                }
+            }
+        }
         const auto& fires=fire_playback_.sample(demo_.fires,time_);
         if(!fires.empty()) {
             const auto listener=renderer.listener_source();
@@ -6091,6 +6255,14 @@ private:
 
         constexpr float GunRadius = 6000.0f;
         constexpr float StepRadius = 1400.0f;
+        const auto flash_begin = std::upper_bound(demo_.effects.begin(),demo_.effects.end(),previous,
+            [](float time,const auto& effect) { return time < effect.time; });
+        for (auto effect = flash_begin; effect != demo_.effects.end() && effect->time <= time_; ++effect) {
+            if (!gmod::demo::flashbang_effect(*effect)) continue;
+            audio.elapsed = std::max(0.0f,time_ - effect->time);
+            float origin[3]{effect->origin[0],effect->origin[1],effect->origin[2] - 5};
+            audio.one_shot(gmod::demo::FlashbangSound,origin,6,sound_radius(85,6000),rate);
+        }
         const auto weapon_shot = [&](const gmod::demo::HeldWeapon& held, float time, const float* position) {
             // Melee attacks use their recorded/reconstructed sounds, never firearm fallbacks.
             const auto* info=swep_info_for(held.class_name);
@@ -7638,6 +7810,7 @@ private:
             {L"dialogs", &gmod::ui::ViewerSettings::dialogs},
             {L"decals", &gmod::ui::ViewerSettings::decals},
             {L"muzzle_flash", &gmod::ui::ViewerSettings::muzzle_flash},
+            {L"flashbang_screen", &gmod::ui::ViewerSettings::flashbang_screen},
         };
         return names;
     }
@@ -8157,6 +8330,7 @@ private:
                         gmod::source::model::PlayerAnimator::Input& input) {
         if (deploy_cuffed_ == -2) {
             deploy_cuffed_ = animator_->activity_sequence("ACT_VM_DEPLOY_7");
+            deploy_flashed_ = animator_->activity_sequence("ACT_VM_DEPLOY_1");
             deploy_phone_call_ = animator_->activity_sequence("ACT_VM_DEPLOY_4");
             deploy_phone_open_ = animator_->activity_sequence("ACT_VM_DEPLOY_5");
         }
@@ -8169,6 +8343,13 @@ private:
             input.act_loop = loop;
         }
         struct Held { const std::vector<gmod::demo::TimedInt>* keys; int sequence; };
+        if (state_held(player.restrained) < 0 && deploy_flashed_ >= 0) {
+            if (const auto* flash = gmod::demo::flash_at(player,time_)) {
+                input.hold_gesture = deploy_flashed_;
+                input.hold_weight = std::clamp((time_ - flash->time) * 6.0f,0.0f,1.0f);
+                return;
+            }
+        }
         for (const Held held : {Held{&player.restrained, deploy_cuffed_},
                                 Held{&player.phone_call, deploy_phone_call_},
                                 Held{&player.phone_open, deploy_phone_open_}}) {
@@ -8977,6 +9158,8 @@ private:
         }
         renderer.set_follow(follow_ >= 0 && !free_view_ ? last_follow_ : std::nullopt,follow_height,vehicle_look);
         renderer.set_first_person(view);
+        renderer.set_flash_opacity(gmod::ui::settings().flashbang_screen && view && follow_ >= 0
+            ? gmod::demo::flash_opacity(demo_.players[static_cast<std::size_t>(follow_)],time_) : 0);
         update_combat_visuals(renderer);
     }
 
@@ -9162,6 +9345,7 @@ private:
     bool world_sound_paused_ = false;
     DWORD last_loop_move_ = 0;
     int deploy_cuffed_ = -2;            // animation sequences for the held gestures (-2: not looked up)
+    int deploy_flashed_ = -2;
     int deploy_phone_call_ = -2;
     int deploy_phone_open_ = -2;
     bool preview_menu_ = false;
@@ -10984,6 +11168,10 @@ LoadedScene load_scene(
         world_materials.insert("effects/muzzleflash1");
         world_materials.insert("effects/blood_core");
         world_materials.insert("particle/particle_smokegrenade");
+        if (std::any_of(demo->effects.begin(),demo->effects.end(),gmod::demo::flashbang_effect)) {
+            world_materials.insert("particle/smokestack");
+            for (int i=1;i<=9;++i) world_materials.insert("particle/smokesprites_000"+std::to_string(i));
+        }
         for (const auto& effect : demo->effects) {
             if (effect.kind == "decal") world_materials.insert(effect.name);
         }
@@ -11537,6 +11725,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
         bool back_weapons_test = false;
         bool identifiers_render_test = false;
         bool fire_render_test = false;
+        bool flashbang_render_test = false;
         bool bank_shutters_test = false;
         bool session_cache_test = false;
         int session_cache_phase = 0;
@@ -11664,6 +11853,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
                 identifiers_render_test = true;
             } else if (argument == L"--fire-render-test") {
                 fire_render_test = true;
+            } else if (argument == L"--flashbang-render-test") {
+                flashbang_render_test = true;
             } else if (argument == L"--bank-shutters-test") {
                 bank_shutters_test = true;
             } else if (argument == L"--bank-baked-test") {
@@ -12227,6 +12418,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
             if (back_weapons_test && replay) replay->test_back_weapons(renderer,std::filesystem::path(screenshot_path).parent_path());
             if (identifiers_render_test && replay) replay->test_model_identifiers(renderer,std::filesystem::path(screenshot_path).parent_path());
             if (fire_render_test && replay) replay->test_fire_render(renderer,std::filesystem::path(screenshot_path).parent_path());
+            if (flashbang_render_test && replay) replay->test_flashbang_render(renderer,std::filesystem::path(screenshot_path).parent_path());
             if (bank_shutters_test && replay) replay->test_bank_shutters(renderer,std::filesystem::path(screenshot_path).parent_path());
             if (bank_baked_test && replay) replay->test_baked_bank_lighting(renderer,std::filesystem::path(screenshot_path).parent_path());
             if (graphics_render_test) {

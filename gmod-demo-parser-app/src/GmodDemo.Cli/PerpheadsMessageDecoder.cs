@@ -36,7 +36,24 @@ public sealed partial class PerpheadsMessageDecoder
     private bool _readLegacyClothing;
     private int _clothingDecodeFailures;
 
-    private sealed record NwEvent(int Tick, int Entity, string Op, string? Key, string? Type, object? Value);
+    private sealed record NwEvent(int Tick, int Entity, string Op, string? Key, string? Type, object? Value,
+        long? ServerTick, float? ServerTickRate);
+    private long? _serverTickOffset;
+    private float? _serverTickRate;
+
+    public void SetServerTickInterval(float interval)
+    {
+        if (!float.IsFinite(interval) || interval <= 0.001f || interval >= 0.5f)
+            throw new InvalidDataException("Invalid server tick interval for FLASHED deadlines.");
+        _serverTickRate = 1.0f / interval;
+    }
+
+    public void SetServerTick(int demoTick, uint serverTick) =>
+        _serverTickOffset = (long)serverTick - demoTick;
+
+    private void AddNwEvent(int tick, int entity, string op, string? key, string? type, object? value) =>
+        _nwEvents.Add(new NwEvent(tick, entity, op, key, type, value,
+            _serverTickOffset is { } offset ? tick + offset : null, _serverTickRate));
 
     private sealed record ClothingItem(
         int Type, int DataNumber, uint? ClothingId, string? Name, int Skin, byte[] Color,
@@ -139,13 +156,13 @@ public sealed partial class PerpheadsMessageDecoder
                     var bits = new Bits(body);
                     var entity = (int)bits.UInt(16);
                     var key = ReadStringTable(bits);
-                    _nwEvents.Add(new NwEvent(tick, entity, "unset", key, null, null));
+                    AddNwEvent(tick, entity, "unset", key, null, null);
                     break;
                 }
                 case "perpheads_NWVars_remove":
                 {
                     var bits = new Bits(body);
-                    _nwEvents.Add(new NwEvent(tick, (int)bits.UInt(16), "remove", null, null, null));
+                    AddNwEvent(tick, (int)bits.UInt(16), "remove", null, null, null);
                     break;
                 }
                 case "ph_clothing_data_sync":
@@ -475,7 +492,7 @@ public sealed partial class PerpheadsMessageDecoder
         var bits = new Bits(body);
         var entity = (int)bits.UInt(16);
         var key = ReadStringTable(bits);
-        _nwEvents.Add(new NwEvent(tick, entity, "set", key, type, ReadValue(bits, type)));
+        AddNwEvent(tick, entity, "set", key, type, ReadValue(bits, type));
     }
 
     private void ReadLoadValues(int tick, byte[] body)
@@ -493,7 +510,7 @@ public sealed partial class PerpheadsMessageDecoder
             }
 
             var type = VarTypes[typeId - 1];
-            _nwEvents.Add(new NwEvent(tick, entity, "set", key, type, ReadValue(bits, type)));
+            AddNwEvent(tick, entity, "set", key, type, ReadValue(bits, type));
         }
     }
 
@@ -601,6 +618,16 @@ public sealed partial class PerpheadsMessageDecoder
                 writer.WriteString("type", item.Type);
                 writer.WritePropertyName("value");
                 WriteValue(writer, item.Value);
+            }
+            // FLASHED is a CurTime deadline, not a duration or a demo-relative timestamp.
+            if (string.Equals(item.Key, "flashed", StringComparison.OrdinalIgnoreCase)
+                && item.Op == "set" && item.Value is float deadline
+                && float.IsFinite(deadline) && tickRate > 0)
+            {
+                if (item.ServerTick is { } serverTick && item.ServerTickRate is { } serverRate)
+                    writer.WriteNumber("endTime", ((double)deadline * serverRate - serverTick + item.Tick) / tickRate);
+                else
+                    Console.Error.WriteLine($"FLASH_CLOCK_UNAVAILABLE tick={item.Tick} entity={item.Entity}");
             }
 
             writer.WriteEndObject();

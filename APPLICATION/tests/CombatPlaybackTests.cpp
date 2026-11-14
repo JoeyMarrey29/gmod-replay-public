@@ -1,5 +1,6 @@
 #include "demo/DemoData.h"
 #include "demo/FireEffects.h"
+#include "demo/FlashbangEffects.h"
 #include "demo/BackWeapons.h"
 #include "demo/MeleePlayback.h"
 #include "demo/Perpheads.h"
@@ -28,6 +29,34 @@ void near(float actual, float expected) {
 
 int main(int argc, char** argv) try {
     using namespace gmod::demo;
+    {
+        DemoPlayer player;
+        player.flashed = {{10, 35}, {20, 50}, {25, 0}};
+        near(flash_opacity(player, 9), 0);
+        near(flash_opacity(player, 10), 1);
+        near(flash_opacity(player, 19), 0.8f);
+        near(flash_opacity(player, 20), 1);
+        near(flash_opacity(player, 25), 0);
+        near(flash_opacity(player, 19), 0.8f);
+        player.flashed = {{10, 15}};
+        near(flash_opacity(player, 10), 0.25f);
+        near(flash_opacity(player, 15), 0);
+        require(flash_at(player, 14) && !flash_at(player, 15), "Flash gesture outlasted its deadline.");
+        DemoEffect effect;
+        effect.time = 10; effect.kind = "dispatch"; effect.name = "flashbang_smoke";
+        effect.scale = 2; effect.origin = {100, 200, 300};
+        require(flashbang_effect(effect), "Flashbang effect was not recognised.");
+        require(flashbang_smoke_particle(effect, 0, 9).opacity == 0, "Flash smoke leaked before detonation.");
+        require(flashbang_smoke_particle(effect, 0, 13).opacity == 0, "Flash smoke outlasted its lifetime.");
+        require(flashbang_smoke_count(effect) == 72, "Original scaled flashbang smoke count changed.");
+        require(flashbang_smoke_material(effect,0) == "particle/smokestack"
+            && flashbang_smoke_material(effect,31).starts_with("particle/smokesprites_000"),
+            "Original flashbang smoke materials changed.");
+        const auto puff = flashbang_smoke_particle(effect, 0, 10.5f);
+        require(puff.opacity > 0 && puff.radius > 0, "Flash smoke was missing after detonation.");
+        near(puff.position[0], flashbang_smoke_particle(effect, 0, 10.5f).position[0]);
+        std::cout << "PASS: recorded white-flash opacity, refresh/unset, gesture expiry and deterministic rewind\n";
+    }
     {
         DemoData demo;
         demo.tick_rate = 25;
@@ -428,7 +457,30 @@ int main(int argc, char** argv) try {
     near(player_eye_height(263), 40.0f);
     near(player_eye_height(PlayerFlagSeated), 40.0f);
     near(player_eye_height(PlayerFlagSeated | 2), 40.0f);
-    if (argc == 5 && std::string_view(argv[1]) == "--prop-droppers") {
+    if (argc == 4 && std::string_view(argv[1]) == "--flashbang") {
+        const std::atomic<bool> cancel{false};
+        const auto demo = load_demo(argv[2], argv[3], [](float, const std::string&) {}, cancel);
+        std::vector<const DemoEffect*> flashes;
+        for (const auto& effect : demo.effects) if (flashbang_effect(effect)) flashes.push_back(&effect);
+        require(flashes.size() == 1, "Repeated deletion or PVS removal produced extra flash detonations.");
+        near(flashes[0]->time, 342.16f);
+        near(flashes[0]->origin[0], -12884.6875f);
+        near(flashes[0]->origin[1], 14628.656f);
+        near(flashes[0]->origin[2], 1375.0312f);
+        int victims = 0;
+        for (const auto& player : demo.players) {
+            const auto* flash = flash_at(player,342.16f);
+            if (!flash) continue;
+            require(player.entity == 12 || player.entity == 45, "Unflashed player received a white screen.");
+            near(flash->value, player.entity == 12 ? 347.89992f : 352.48391f);
+            require(flash_opacity(player,342.16f) > 0.25f, "Recorded white flash is too weak.");
+            require(flash_opacity(player,353) == 0 && flash_opacity(player,342) == 0,
+                "White flash leaked outside its recorded interval.");
+            ++victims;
+        }
+        require(victims == 2, "Missing recorded flashed players.");
+        std::cout << "PASS: supplied replay, one M84 detonation, exact last position and both server-timed flash victims\n";
+    } else if (argc == 5 && std::string_view(argv[1]) == "--prop-droppers") {
         const std::atomic<bool> cancel{false};
         const auto demo = load_demo(argv[2], argv[3], [](float, const std::string&) {}, cancel);
         const auto registry = load_perpheads_registry(argv[4]);
@@ -1101,7 +1153,7 @@ int main(int argc, char** argv) try {
             return sound.name == "ambient/fire/mtov_flame2.wav" && std::abs(sound.time-19.04f) < 0.001f;
         }),"October 8 server sound did not reach native playback.");
         std::cout << "PASS: real October 8 corpse, bottle, fist, parented brush and custom sound integration\n";
-    } else if (argc != 1) {
+    } else if (argc != 1 && !(argc == 4 && std::string_view(argv[1]) == "--flashbang")) {
         std::cerr << "Usage: gmod-replay-combat-tests [<October8-demo.dem> <gmoddem.exe>]"
             " | --recovered-pair <Build.dem> <build-recovered.dem> <gmoddem.exe>"
             " | --modern-clothing <warehouse-demo.dem> <gmoddem.exe> <perp-data-root>\n";
